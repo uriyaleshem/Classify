@@ -1,0 +1,6 @@
+Reflection Task
+
+Course: Computer Science
+Due: 2026-04-04
+
+Write a short reflection based on the lesson material.

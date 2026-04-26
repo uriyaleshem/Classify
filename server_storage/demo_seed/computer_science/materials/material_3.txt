@@ -1,0 +1,5 @@
+Important Notes
+
+Course: Computer Science
+Created for demo UI data.
+Guidelines for submission and grading.

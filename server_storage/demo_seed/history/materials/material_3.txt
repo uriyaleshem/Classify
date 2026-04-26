@@ -1,0 +1,5 @@
+Important Notes
+
+Course: History
+Created for demo UI data.
+Guidelines for submission and grading.
