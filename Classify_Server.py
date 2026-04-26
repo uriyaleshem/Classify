@@ -1132,7 +1132,6 @@ def handle_client(client_sock, addr):
         client_sock.close()
         print(f"[-] Disconnected: {addr}")
 
-#test
 def main():
     STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
