@@ -1125,7 +1125,7 @@ def handle_client(client_sock, addr):
             plain_resp = json.dumps(resp).encode("utf-8")
             encrypted_resp = encrypt_message(aes_key, plain_resp)
             send_with_size(client_sock, encrypted_resp)
-#testtttt
+
     except Exception as e:
         print(f"[!] Error {addr}: {e}")
     finally:
