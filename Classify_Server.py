@@ -22,6 +22,20 @@ MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
 LOG_FILE = Path(__file__).resolve().parent / "server_data/server_log.txt"
 
 PUBLIC_PATH_PREFIX = "storage://"
+SOCKET_TIMEOUT_SECONDS = 30
+
+LOG_REDACTED_VALUE = "<redacted>"
+LOG_BINARY_VALUE = "<binary content omitted>"
+LOG_MAX_TEXT_CHARS = 800
+LOG_SUMMARY_KEYS = {
+    "schools", "users", "courses", "members", "assignments", "submissions",
+    "ai_results", "grades", "feedback", "materials", "messages",
+    "message_reads", "grade_reads", "activity"
+}
+LOG_SENSITIVE_KEYS = {
+    "password", "password_hash", "token", "secret", "api_key", "authorization",
+    "file_content_b64", "attachment_content_b64", "content_b64"
+}
 
 
 def resolve_storage_path(file_ref: str) -> Optional[Path]:
@@ -81,9 +95,34 @@ def normalize_public_file_refs(value):
 # Helpers: validate + responses
 # -----------------------------
 
+def redact_for_log(value, parent_key=""):
+    key_name = str(parent_key or "").lower()
+
+    if key_name in LOG_SENSITIVE_KEYS:
+        if "b64" in key_name or "content" in key_name:
+            return LOG_BINARY_VALUE
+        return LOG_REDACTED_VALUE
+
+    if isinstance(value, dict):
+        return {key: redact_for_log(item, key) for key, item in value.items()}
+
+    if isinstance(value, list):
+        if key_name in LOG_SUMMARY_KEYS:
+            return f"<list: {len(value)} item(s)>"
+        return [redact_for_log(item, parent_key) for item in value[:25]] + (["<truncated>"] if len(value) > 25 else [])
+
+    if isinstance(value, str):
+        if len(value) > LOG_MAX_TEXT_CHARS:
+            return value[:LOG_MAX_TEXT_CHARS] + "... <truncated>"
+        return value
+
+    return value
+
 def log_action(req_type, req_data, resp_data, client_ip="UNKNOWN", user_id=None, user_name=None):
     try:
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        safe_req = redact_for_log(req_data)
+        safe_resp = redact_for_log(resp_data)
 
         log_entry = (
             f"\n{'='*60}\n"
@@ -92,8 +131,8 @@ def log_action(req_type, req_data, resp_data, client_ip="UNKNOWN", user_id=None,
             f"USER_ID: {user_id}\n"
             f"USER_NAME: {user_name}\n"
             f"ACTION: {req_type}\n"
-            f"REQUEST:\n{json.dumps(req_data, indent=2, ensure_ascii=False)}\n"
-            f"RESPONSE:\n{json.dumps(resp_data, indent=2, ensure_ascii=False)}\n"
+            f"REQUEST:\n{json.dumps(safe_req, indent=2, ensure_ascii=False)}\n"
+            f"RESPONSE:\n{json.dumps(safe_resp, indent=2, ensure_ascii=False)}\n"
         )
 
         with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -1104,6 +1143,7 @@ def handle_client(client_sock, addr):
     print(f"[+] Connected: {addr}")
     session = {}
     try:
+        client_sock.settimeout(SOCKET_TIMEOUT_SECONDS)
         aes_key = DH_server(client_sock)
 
         while True:

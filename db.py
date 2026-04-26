@@ -1961,39 +1961,421 @@ def admin_get_overview():
     conn = _conn()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT school_id, name, address, contact_name, contact_email FROM schools ORDER BY school_id")
-        schools = [{"school_id": r[0], "name": r[1] or "", "address": r[2] or "", "contact_name": r[3] or "", "contact_email": r[4] or ""} for r in cur.fetchall()]
+        cur.execute("""
+            SELECT s.school_id, s.name, s.address, s.contact_name, s.contact_email, COALESCE(s.created_at, ''),
+                   COUNT(DISTINCT u.id) as users_count,
+                   COUNT(DISTINCT c.course_id) as courses_count
+            FROM schools s
+            LEFT JOIN users u ON s.school_id = u.schoolID
+            LEFT JOIN courses c ON s.school_id = c.schoolID
+            GROUP BY s.school_id
+            ORDER BY s.school_id
+        """)
+        schools = [{
+            "school_id": r[0],
+            "name": r[1] or "",
+            "address": r[2] or "",
+            "contact_name": r[3] or "",
+            "contact_email": r[4] or "",
+            "created_at": r[5] or "",
+            "users_count": int(r[6] or 0),
+            "courses_count": int(r[7] or 0)
+        } for r in cur.fetchall()]
 
-        cur.execute("SELECT id, name, email, role, schoolID, status, created_at FROM users ORDER BY id")
-        users = [{"id": r[0], "name": r[1] or "", "email": r[2] or "", "role": r[3] or "", "school_id": r[4], "status": r[5] or "", "created_at": r[6] or ""} for r in cur.fetchall()]
+        cur.execute("""
+            SELECT u.id, u.name, u.email, u.role, u.schoolID, u.status, u.created_at,
+                   COALESCE(s.name, '') as school_name,
+                   COUNT(DISTINCT cm.course_id) as memberships_count
+            FROM users u
+            LEFT JOIN schools s ON u.schoolID = s.school_id
+            LEFT JOIN course_members cm ON u.id = cm.student_id
+            GROUP BY u.id
+            ORDER BY u.id
+        """)
+        users = [{
+            "id": r[0],
+            "name": r[1] or "",
+            "email": r[2] or "",
+            "role": r[3] or "",
+            "school_id": r[4],
+            "status": r[5] or "",
+            "created_at": r[6] or "",
+            "school_name": r[7] or "",
+            "memberships_count": int(r[8] or 0)
+        } for r in cur.fetchall()]
 
         cur.execute("""
             SELECT c.course_id, c.name, c.description, c.teacher_id, c.schoolID, c.created_at, c.class_code,
                    COALESCE(u.name, '') as teacher_name, COALESCE(s.name, '') as school_name,
-                   COUNT(CASE WHEN COALESCE(cm.member_status, 'ACTIVE') = 'ACTIVE' THEN cm.student_id END) as students
+                   COUNT(DISTINCT CASE WHEN COALESCE(cm.member_status, 'ACTIVE') = 'ACTIVE' THEN cm.student_id END) as students,
+                   COUNT(DISTINCT a.assignment_id) as assignments_count,
+                   COUNT(DISTINCT m.material_id) as materials_count,
+                   COUNT(DISTINCT msg.message_id) as messages_count
             FROM courses c
             LEFT JOIN users u ON c.teacher_id = u.id
             LEFT JOIN schools s ON c.schoolID = s.school_id
             LEFT JOIN course_members cm ON c.course_id = cm.course_id
+            LEFT JOIN assignments a ON c.course_id = a.course_id
+            LEFT JOIN materials m ON c.course_id = m.course_id
+            LEFT JOIN messages msg ON c.course_id = msg.course_id
             GROUP BY c.course_id
             ORDER BY c.course_id
         """)
-        courses = [{"course_id": r[0], "name": r[1] or "", "description": r[2] or "", "teacher_id": r[3], "school_id": r[4], "created_at": r[5] or "", "class_code": r[6] or "", "teacher_name": r[7] or "", "school_name": r[8] or "", "students": r[9]} for r in cur.fetchall()]
+        courses = [{
+            "course_id": r[0],
+            "name": r[1] or "",
+            "description": r[2] or "",
+            "teacher_id": r[3],
+            "school_id": r[4],
+            "created_at": r[5] or "",
+            "class_code": r[6] or "",
+            "teacher_name": r[7] or "",
+            "school_name": r[8] or "",
+            "students": int(r[9] or 0),
+            "assignments_count": int(r[10] or 0),
+            "materials_count": int(r[11] or 0),
+            "messages_count": int(r[12] or 0)
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT cm.id, cm.course_id, COALESCE(c.name, '') as course_name, COALESCE(c.class_code, '') as class_code,
+                   c.schoolID, COALESCE(s.name, '') as school_name, cm.student_id,
+                   COALESCE(u.name, '') as student_name, COALESCE(u.email, '') as student_email,
+                   COALESCE(cm.member_status, 'ACTIVE') as member_status, cm.joined_at
+            FROM course_members cm
+            LEFT JOIN courses c ON cm.course_id = c.course_id
+            LEFT JOIN schools s ON c.schoolID = s.school_id
+            LEFT JOIN users u ON cm.student_id = u.id
+            ORDER BY cm.id
+        """)
+        members = [{
+            "member_id": r[0],
+            "course_id": r[1],
+            "course_name": r[2] or "",
+            "class_code": r[3] or "",
+            "school_id": r[4],
+            "school_name": r[5] or "",
+            "student_id": r[6],
+            "student_name": r[7] or "",
+            "student_email": r[8] or "",
+            "member_status": r[9] or "",
+            "joined_at": r[10] or ""
+        } for r in cur.fetchall()]
 
         cur.execute("""
             SELECT a.assignment_id, a.course_id, a.title, a.description, a.due_date, a.attachment_path, a.ai_enabled, a.is_closed, a.created_at,
                    COALESCE(c.name, '') as course_name, COALESCE(u.name, '') as teacher_name,
-                   COUNT(sub.submission_id) as submission_count
+                   COALESCE(s.name, '') as school_name, c.schoolID,
+                   COUNT(DISTINCT sub.submission_id) as submission_count,
+                   COUNT(DISTINCT g.grade_id) as graded_count
             FROM assignments a
             LEFT JOIN courses c ON a.course_id = c.course_id
             LEFT JOIN users u ON c.teacher_id = u.id
+            LEFT JOIN schools s ON c.schoolID = s.school_id
             LEFT JOIN submissions sub ON a.assignment_id = sub.assignment_id
+            LEFT JOIN grades g ON sub.submission_id = g.submission_id
             GROUP BY a.assignment_id
             ORDER BY a.assignment_id
         """)
-        assignments = [{"assignment_id": r[0], "course_id": r[1], "title": r[2] or "", "description": r[3] or "", "due_date": _normalize_due_date_text(r[4]), "attachment_path": r[5] or "", "ai_enabled": int(r[6] or 0), "is_closed": int(r[7] or 0), "created_at": r[8] or "", "course_name": r[9] or "", "teacher_name": r[10] or "", "submission_count": r[11]} for r in cur.fetchall()]
+        assignments = [{
+            "assignment_id": r[0],
+            "course_id": r[1],
+            "title": r[2] or "",
+            "description": r[3] or "",
+            "due_date": _normalize_due_date_text(r[4]),
+            "attachment_path": r[5] or "",
+            "ai_enabled": int(r[6] or 0),
+            "is_closed": int(r[7] or 0),
+            "created_at": r[8] or "",
+            "course_name": r[9] or "",
+            "teacher_name": r[10] or "",
+            "school_name": r[11] or "",
+            "school_id": r[12],
+            "submission_count": int(r[13] or 0),
+            "graded_count": int(r[14] or 0)
+        } for r in cur.fetchall()]
 
-        return True, {"schools": schools, "users": users, "courses": courses, "assignments": assignments}
+        cur.execute("""
+            SELECT sub.submission_id, sub.assignment_id, COALESCE(a.title, '') as assignment_title,
+                   sub.student_id, COALESCE(u.name, '') as student_name, COALESCE(u.email, '') as student_email,
+                   sub.file_path, sub.submitted_at, sub.status,
+                   COALESCE(c.course_id, -1) as course_id, COALESCE(c.name, '') as course_name,
+                   COALESCE(s.school_id, -1) as school_id, COALESCE(s.name, '') as school_name,
+                   g.ai_score, g.final_score, g.updated_at,
+                   COUNT(DISTINCT ar.ai_result_id) as ai_results_count
+            FROM submissions sub
+            LEFT JOIN assignments a ON sub.assignment_id = a.assignment_id
+            LEFT JOIN courses c ON a.course_id = c.course_id
+            LEFT JOIN schools s ON c.schoolID = s.school_id
+            LEFT JOIN users u ON sub.student_id = u.id
+            LEFT JOIN grades g ON sub.submission_id = g.submission_id
+            LEFT JOIN ai_results ar ON sub.submission_id = ar.submission_id
+            GROUP BY sub.submission_id
+            ORDER BY sub.submission_id
+        """)
+        submissions = [{
+            "submission_id": r[0],
+            "assignment_id": r[1],
+            "assignment_title": r[2] or "",
+            "student_id": r[3],
+            "student_name": r[4] or "",
+            "student_email": r[5] or "",
+            "file_path": r[6] or "",
+            "submitted_at": r[7] or "",
+            "status": r[8] or "",
+            "course_id": r[9],
+            "course_name": r[10] or "",
+            "school_id": r[11],
+            "school_name": r[12] or "",
+            "ai_score": r[13],
+            "final_score": r[14],
+            "updated_at": r[15] or "",
+            "ai_results_count": int(r[16] or 0)
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT ar.ai_result_id, ar.submission_id, ar.engine_name, ar.score, ar.feedback,
+                   COALESCE(a.title, '') as assignment_title, COALESCE(c.name, '') as course_name,
+                   COALESCE(u.name, '') as student_name
+            FROM ai_results ar
+            LEFT JOIN submissions sub ON ar.submission_id = sub.submission_id
+            LEFT JOIN assignments a ON sub.assignment_id = a.assignment_id
+            LEFT JOIN courses c ON a.course_id = c.course_id
+            LEFT JOIN users u ON sub.student_id = u.id
+            ORDER BY ar.ai_result_id
+        """)
+        ai_results = [{
+            "ai_result_id": r[0],
+            "submission_id": r[1],
+            "engine_name": r[2] or "",
+            "score": r[3],
+            "feedback": r[4] or "",
+            "assignment_title": r[5] or "",
+            "course_name": r[6] or "",
+            "student_name": r[7] or ""
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT g.grade_id, g.submission_id, g.ai_score, g.final_score, g.updated_by,
+                   COALESCE(editor.name, '') as updated_by_name, g.updated_at,
+                   COALESCE(a.title, '') as assignment_title, COALESCE(c.name, '') as course_name,
+                   COALESCE(student.name, '') as student_name
+            FROM grades g
+            LEFT JOIN submissions sub ON g.submission_id = sub.submission_id
+            LEFT JOIN assignments a ON sub.assignment_id = a.assignment_id
+            LEFT JOIN courses c ON a.course_id = c.course_id
+            LEFT JOIN users student ON sub.student_id = student.id
+            LEFT JOIN users editor ON g.updated_by = editor.id
+            ORDER BY g.grade_id
+        """)
+        grades = [{
+            "grade_id": r[0],
+            "submission_id": r[1],
+            "ai_score": r[2],
+            "final_score": r[3],
+            "updated_by": r[4],
+            "updated_by_name": r[5] or "",
+            "updated_at": r[6] or "",
+            "assignment_title": r[7] or "",
+            "course_name": r[8] or "",
+            "student_name": r[9] or ""
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT f.feedback_id, f.submission_id, f.ai_feedback, f.teacher_feedback,
+                   COALESCE(a.title, '') as assignment_title, COALESCE(c.name, '') as course_name,
+                   COALESCE(u.name, '') as student_name
+            FROM feedback f
+            LEFT JOIN submissions sub ON f.submission_id = sub.submission_id
+            LEFT JOIN assignments a ON sub.assignment_id = a.assignment_id
+            LEFT JOIN courses c ON a.course_id = c.course_id
+            LEFT JOIN users u ON sub.student_id = u.id
+            ORDER BY f.feedback_id
+        """)
+        feedback = [{
+            "feedback_id": r[0],
+            "submission_id": r[1],
+            "ai_feedback": r[2] or "",
+            "teacher_feedback": r[3] or "",
+            "assignment_title": r[4] or "",
+            "course_name": r[5] or "",
+            "student_name": r[6] or ""
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT m.material_id, m.course_id, COALESCE(c.name, '') as course_name,
+                   COALESCE(s.name, '') as school_name, m.title, m.description, m.type,
+                   m.created_by, COALESCE(u.name, '') as created_by_name,
+                   m.file_path, m.created_at
+            FROM materials m
+            LEFT JOIN courses c ON m.course_id = c.course_id
+            LEFT JOIN schools s ON c.schoolID = s.school_id
+            LEFT JOIN users u ON m.created_by = u.id
+            ORDER BY m.material_id
+        """)
+        materials = [{
+            "material_id": r[0],
+            "course_id": r[1],
+            "course_name": r[2] or "",
+            "school_name": r[3] or "",
+            "title": r[4] or "",
+            "description": r[5] or "",
+            "type": r[6] or "",
+            "created_by": r[7],
+            "created_by_name": r[8] or "",
+            "file_path": r[9] or "",
+            "created_at": r[10] or ""
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT msg.message_id, msg.course_id, COALESCE(c.name, '') as course_name,
+                   COALESCE(s.name, '') as school_name, msg.sender_id,
+                   COALESCE(u.name, '') as sender_name, msg.subject, msg.body,
+                   msg.state, msg.created_at, COUNT(mr.id) as read_count
+            FROM messages msg
+            LEFT JOIN courses c ON msg.course_id = c.course_id
+            LEFT JOIN schools s ON c.schoolID = s.school_id
+            LEFT JOIN users u ON msg.sender_id = u.id
+            LEFT JOIN message_reads mr ON msg.message_id = mr.message_id
+            GROUP BY msg.message_id
+            ORDER BY msg.message_id
+        """)
+        messages = [{
+            "message_id": r[0],
+            "course_id": r[1],
+            "course_name": r[2] or "",
+            "school_name": r[3] or "",
+            "sender_id": r[4],
+            "sender_name": r[5] or "",
+            "subject": r[6] or "",
+            "body": r[7] or "",
+            "state": r[8] or "",
+            "created_at": r[9] or "",
+            "read_count": int(r[10] or 0)
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT mr.id, mr.message_id, COALESCE(msg.subject, '') as message_subject,
+                   mr.student_id, COALESCE(u.name, '') as student_name,
+                   COALESCE(c.name, '') as course_name, mr.read_at
+            FROM message_reads mr
+            LEFT JOIN messages msg ON mr.message_id = msg.message_id
+            LEFT JOIN courses c ON msg.course_id = c.course_id
+            LEFT JOIN users u ON mr.student_id = u.id
+            ORDER BY mr.id
+        """)
+        message_reads = [{
+            "read_id": r[0],
+            "message_id": r[1],
+            "message_subject": r[2] or "",
+            "student_id": r[3],
+            "student_name": r[4] or "",
+            "course_name": r[5] or "",
+            "read_at": r[6] or ""
+        } for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT gr.id, gr.submission_id, COALESCE(a.title, '') as assignment_title,
+                   gr.student_id, COALESCE(u.name, '') as student_name,
+                   COALESCE(c.name, '') as course_name, gr.read_at
+            FROM grade_reads gr
+            LEFT JOIN submissions sub ON gr.submission_id = sub.submission_id
+            LEFT JOIN assignments a ON sub.assignment_id = a.assignment_id
+            LEFT JOIN courses c ON a.course_id = c.course_id
+            LEFT JOIN users u ON gr.student_id = u.id
+            ORDER BY gr.id
+        """)
+        grade_reads = [{
+            "read_id": r[0],
+            "submission_id": r[1],
+            "assignment_title": r[2] or "",
+            "student_id": r[3],
+            "student_name": r[4] or "",
+            "course_name": r[5] or "",
+            "read_at": r[6] or ""
+        } for r in cur.fetchall()]
+
+        def table_count(table_name):
+            cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+            return int(cur.fetchone()[0] or 0)
+
+        def grouped_counts(table_name, column_name):
+            cur.execute(f"SELECT COALESCE({column_name}, ''), COUNT(*) FROM {table_name} GROUP BY {column_name}")
+            return {str(row[0] or "UNKNOWN"): int(row[1] or 0) for row in cur.fetchall()}
+
+        db_path = Path("server_data/classify.db")
+        storage_root = Path("server_storage")
+        storage_file_count = 0
+        storage_size_bytes = 0
+        if storage_root.exists():
+            for file_path in storage_root.rglob("*"):
+                if file_path.is_file():
+                    storage_file_count += 1
+                    storage_size_bytes += file_path.stat().st_size
+
+        activity = []
+        for row in users:
+            activity.append({"type": "User", "title": row["name"], "detail": row["email"], "at": row["created_at"]})
+        for row in courses:
+            activity.append({"type": "Course", "title": row["name"], "detail": row["school_name"], "at": row["created_at"]})
+        for row in assignments:
+            activity.append({"type": "Assignment", "title": row["title"], "detail": row["course_name"], "at": row["created_at"]})
+        for row in submissions:
+            activity.append({"type": "Submission", "title": row["student_name"], "detail": row["assignment_title"], "at": row["submitted_at"]})
+        for row in materials:
+            activity.append({"type": "Material", "title": row["title"], "detail": row["course_name"], "at": row["created_at"]})
+        activity = sorted([item for item in activity if item.get("at")], key=lambda item: item["at"], reverse=True)[:60]
+
+        stats = {
+            "counts": {
+                "schools": table_count("schools"),
+                "users": table_count("users"),
+                "courses": table_count("courses"),
+                "course_members": table_count("course_members"),
+                "assignments": table_count("assignments"),
+                "submissions": table_count("submissions"),
+                "ai_results": table_count("ai_results"),
+                "grades": table_count("grades"),
+                "feedback": table_count("feedback"),
+                "materials": table_count("materials"),
+                "messages": table_count("messages"),
+                "message_reads": table_count("message_reads"),
+                "grade_reads": table_count("grade_reads")
+            },
+            "users_by_role": grouped_counts("users", "role"),
+            "users_by_status": grouped_counts("users", "status"),
+            "submissions_by_status": grouped_counts("submissions", "status"),
+            "system": {
+                "db_size_bytes": db_path.stat().st_size if db_path.exists() else 0,
+                "storage_file_count": storage_file_count,
+                "storage_size_bytes": storage_size_bytes
+            }
+        }
+
+        system_rows = [
+            {"metric": "Database file", "value": str(stats["system"]["db_size_bytes"]), "unit": "bytes", "source": str(db_path)},
+            {"metric": "Storage files", "value": str(storage_file_count), "unit": "files", "source": str(storage_root)},
+            {"metric": "Storage size", "value": str(storage_size_bytes), "unit": "bytes", "source": str(storage_root)}
+        ]
+
+        return True, {
+            "schools": schools,
+            "users": users,
+            "courses": courses,
+            "members": members,
+            "assignments": assignments,
+            "submissions": submissions,
+            "ai_results": ai_results,
+            "grades": grades,
+            "feedback": feedback,
+            "materials": materials,
+            "messages": messages,
+            "message_reads": message_reads,
+            "grade_reads": grade_reads,
+            "activity": activity,
+            "system": system_rows,
+            "stats": stats
+        }
     except sqlite3.Error as e:
         return False, str(e)
     finally:

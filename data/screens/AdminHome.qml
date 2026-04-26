@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import QtQuick.Dialogs
 
 Item {
     id: root
@@ -10,193 +11,303 @@ Item {
     property int userId: -1
     property var nav: null
 
-    property int activeTab: 0
+    property int activeSectionIndex: 0
     property string searchText: ""
     property bool loading: false
     property string statusText: "Ready"
+    property bool statusIsError: false
     property var selectedRow: null
     property int selectedSourceIndex: -1
 
-    property var schoolsData: []
-    property var usersData: []
-    property var coursesData: []
-    property var assignmentsData: []
-
     property bool editorVisible: false
     property bool confirmVisible: false
-    property string editMode: "view"
+    property string editMode: "edit"
     property string editEntity: ""
     property var editRow: null
+    property string fileDialogTarget: ""
     property string pendingDeleteEntity: ""
     property var pendingDeleteRow: null
 
-    readonly property bool compact: width < 1050
-    readonly property bool narrow: width < 760
-    readonly property int sidebarWidth: narrow ? 0 : 244
-    readonly property color pageBg: "#F4F7FB"
-    readonly property color panelBg: "#FFFFFF"
-    readonly property color ink: "#111827"
+    property var allData: ({
+        schools: [], users: [], courses: [], members: [], assignments: [], submissions: [],
+        ai_results: [], grades: [], feedback: [], materials: [], messages: [],
+        message_reads: [], grade_reads: [], activity: [], system: []
+    })
+    property var stats: ({})
+
+    readonly property bool compact: width < 1120
+    readonly property bool narrow: width < 860
+    readonly property int sidebarWidth: narrow ? 0 : 252
+
+    readonly property color bg: "#F6F7FB"
+    readonly property color panel: "#FFFFFF"
+    readonly property color panel2: "#F8FAFC"
+    readonly property color ink: "#0F172A"
     readonly property color muted: "#64748B"
     readonly property color faint: "#94A3B8"
     readonly property color line: "#E2E8F0"
-    readonly property color softLine: "#EEF2F7"
-    readonly property color primary: "#4F46E5"
-    readonly property color primary2: "#7C3AED"
-    readonly property color primarySoft: "#EEF2FF"
-    readonly property color good: "#059669"
-    readonly property color goodSoft: "#ECFDF5"
-    readonly property color warn: "#D97706"
-    readonly property color warnSoft: "#FFFBEB"
-    readonly property color bad: "#DC2626"
-    readonly property color badSoft: "#FEF2F2"
-    readonly property color dark: "#0F172A"
+    readonly property color lineSoft: "#EEF2F7"
+    readonly property color side: "#111827"
+    readonly property color primary: "#2563EB"
+    readonly property color primarySoft: "#EFF6FF"
+    readonly property color teal: "#0F766E"
+    readonly property color tealSoft: "#ECFDF5"
+    readonly property color amber: "#D97706"
+    readonly property color amberSoft: "#FFFBEB"
+    readonly property color red: "#DC2626"
+    readonly property color redSoft: "#FEF2F2"
+    readonly property color violet: "#7C3AED"
 
-    ListModel { id: filteredModel }
+    property var sections: [
+        { key: "schools", label: "Schools", short: "SC", id: "school_id", create: true, edit: true, remove: true },
+        { key: "users", label: "Users", short: "US", id: "id", create: true, edit: true, remove: true },
+        { key: "courses", label: "Courses", short: "CR", id: "course_id", create: true, edit: true, remove: true },
+        { key: "members", label: "Members", short: "MB", id: "member_id", create: false, edit: false, remove: false },
+        { key: "assignments", label: "Assignments", short: "AS", id: "assignment_id", create: true, edit: true, remove: true },
+        { key: "submissions", label: "Submissions", short: "SB", id: "submission_id", create: false, edit: false, remove: false },
+        { key: "grades", label: "Grades", short: "GR", id: "grade_id", create: false, edit: false, remove: false },
+        { key: "ai_results", label: "AI Results", short: "AI", id: "ai_result_id", create: false, edit: false, remove: false },
+        { key: "feedback", label: "Feedback", short: "FB", id: "feedback_id", create: false, edit: false, remove: false },
+        { key: "materials", label: "Materials", short: "MT", id: "material_id", create: false, edit: false, remove: true },
+        { key: "messages", label: "Messages", short: "MS", id: "message_id", create: false, edit: false, remove: true },
+        { key: "message_reads", label: "Message Reads", short: "MR", id: "read_id", create: false, edit: false, remove: false },
+        { key: "grade_reads", label: "Grade Reads", short: "RR", id: "read_id", create: false, edit: false, remove: false },
+        { key: "activity", label: "Activity", short: "AC", id: "at", create: false, edit: false, remove: false },
+        { key: "system", label: "System", short: "SY", id: "metric", create: false, edit: false, remove: false }
+    ]
+
+    ListModel {
+        id: filteredModel
+        dynamicRoles: true
+    }
+
+    Timer {
+        id: statusTimer
+        interval: 3600
+        onTriggered: {
+            if (!loading) {
+                statusText = "Ready"
+                statusIsError = false
+            }
+        }
+    }
 
     function asText(v) {
-        if (v === undefined || v === null) return ""
+        if (v === undefined || v === null)
+            return ""
         return String(v)
     }
 
     function safe(v) {
         var t = asText(v).trim()
-        return t.length === 0 ? "—" : t
+        return t.length === 0 ? "-" : t
     }
 
     function shortText(v, maxLen) {
         var t = safe(v)
-        if (t === "—") return t
-        if (t.length <= maxLen) return t
-        return t.substring(0, maxLen - 1) + "…"
+        if (t.length <= maxLen)
+            return t
+        return t.substring(0, Math.max(0, maxLen - 3)) + "..."
     }
 
     function shortDate(v) {
         var t = safe(v)
-        if (t === "—") return t
+        if (t === "-")
+            return t
         return t.replace("T", " ").substring(0, 16)
     }
 
     function fileName(v) {
         var t = safe(v)
-        if (t === "—") return t
+        if (t === "-")
+            return t
         var clean = t.replace(/\\/g, "/")
         var parts = clean.split("/")
         return parts.length > 0 ? parts[parts.length - 1] : t
     }
 
-    function idOf(row) {
-        if (!row) return ""
-        if (activeTab === 0) return asText(row.school_id)
-        if (activeTab === 1) return asText(row.id)
-        if (activeTab === 2) return asText(row.course_id)
-        return asText(row.assignment_id)
+    function fileNameFromPath(v) {
+        var t = asText(v).replace("file:///", "").replace(/\\/g, "/")
+        var parts = t.split("/")
+        return parts.length > 0 ? parts[parts.length - 1] : t
     }
 
-    function titleOf(row) {
-        if (!row) return ""
-        if (activeTab === 0) return safe(row.name)
-        if (activeTab === 1) return safe(row.name)
-        if (activeTab === 2) return safe(row.name)
-        return safe(row.title)
+    function formatBytes(value) {
+        var n = Number(value || 0)
+        if (n < 1024)
+            return n + " B"
+        if (n < 1024 * 1024)
+            return (n / 1024).toFixed(1) + " KB"
+        if (n < 1024 * 1024 * 1024)
+            return (n / 1024 / 1024).toFixed(1) + " MB"
+        return (n / 1024 / 1024 / 1024).toFixed(1) + " GB"
     }
 
-    function subTitleOf(row) {
-        if (!row) return ""
-        if (activeTab === 0) return safe(row.contact_email || row.address)
-        if (activeTab === 1) return safe(row.email)
-        if (activeTab === 2) return "Teacher: " + safe(row.teacher_name) + "  ·  Code: " + safe(row.class_code)
-        return "Course: " + safe(row.course_name) + "  ·  Due: " + shortDate(row.due_date)
+    function pad2(n) {
+        return n < 10 ? "0" + n : "" + n
     }
 
-    function badgeText(row) {
-        if (!row) return ""
-        if (activeTab === 0) return "School"
-        if (activeTab === 1) return safe(row.role)
-        if (activeTab === 2) return asText(row.students || 0) + " students"
-        return row.is_closed ? "Closed" : "Open"
+    function defaultDueDate() {
+        var d = new Date()
+        d.setDate(d.getDate() + 7)
+        return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " 23:59"
     }
 
-    function badgeColor(row) {
-        if (!row) return primary
-        if (activeTab === 1) {
-            var r = asText(row.role).toUpperCase()
-            if (r === "ADMIN") return primary2
-            if (r === "MANAGER") return primary
-            if (r === "TEACHER") return good
-            return muted
+    function sectionAt(index) {
+        if (index < 0 || index >= sections.length)
+            return sections[0]
+        return sections[index]
+    }
+
+    function currentSection() {
+        return sectionAt(activeSectionIndex)
+    }
+
+    function rowsForKey(key) {
+        return allData && allData[key] ? allData[key] : []
+    }
+
+    function currentRows() {
+        return rowsForKey(currentSection().key)
+    }
+
+    function countFor(key) {
+        return rowsForKey(key).length
+    }
+
+    function countByValue(rows, field, value) {
+        var n = 0
+        var wanted = asText(value).toUpperCase()
+        for (var i = 0; i < rows.length; i++) {
+            if (asText(rows[i][field]).toUpperCase() === wanted)
+                n++
         }
-        if (activeTab === 3) return row.is_closed ? bad : good
+        return n
+    }
+
+    function rowId(row) {
+        if (!row)
+            return ""
+        var idKey = currentSection().id
+        return safe(row[idKey])
+    }
+
+    function primaryOf(row) {
+        if (!row)
+            return ""
+        var key = currentSection().key
+        if (key === "schools") return safe(row.name)
+        if (key === "users") return safe(row.name)
+        if (key === "courses") return safe(row.name)
+        if (key === "members") return safe(row.student_name)
+        if (key === "assignments") return safe(row.title)
+        if (key === "submissions") return safe(row.assignment_title)
+        if (key === "grades") return safe(row.student_name)
+        if (key === "ai_results") return safe(row.engine_name)
+        if (key === "feedback") return safe(row.student_name)
+        if (key === "materials") return safe(row.title)
+        if (key === "messages") return safe(row.subject)
+        if (key === "message_reads") return safe(row.message_subject)
+        if (key === "grade_reads") return safe(row.assignment_title)
+        if (key === "activity") return safe(row.title)
+        if (key === "system") return safe(row.metric)
+        return rowId(row)
+    }
+
+    function secondaryOf(row) {
+        if (!row)
+            return ""
+        var key = currentSection().key
+        if (key === "schools") return safe(row.contact_email || row.address)
+        if (key === "users") return safe(row.email) + " / " + safe(row.school_name)
+        if (key === "courses") return "Teacher: " + safe(row.teacher_name) + " / Code: " + safe(row.class_code)
+        if (key === "members") return safe(row.course_name) + " / " + safe(row.student_email)
+        if (key === "assignments") return safe(row.course_name) + " / Due: " + shortDate(row.due_date)
+        if (key === "submissions") return safe(row.student_name) + " / " + shortDate(row.submitted_at)
+        if (key === "grades") return safe(row.course_name) + " / Final: " + safe(row.final_score)
+        if (key === "ai_results") return safe(row.assignment_title) + " / Score: " + safe(row.score)
+        if (key === "feedback") return safe(row.assignment_title)
+        if (key === "materials") return safe(row.course_name) + " / " + fileName(row.file_path)
+        if (key === "messages") return safe(row.course_name) + " / " + shortDate(row.created_at)
+        if (key === "message_reads") return safe(row.student_name) + " / " + shortDate(row.read_at)
+        if (key === "grade_reads") return safe(row.student_name) + " / " + shortDate(row.read_at)
+        if (key === "activity") return safe(row.type) + " / " + shortDate(row.at)
+        if (key === "system") return safe(row.value) + " " + safe(row.unit)
+        return ""
+    }
+
+    function statusOf(row) {
+        if (!row)
+            return ""
+        var key = currentSection().key
+        if (key === "users") return safe(row.status)
+        if (key === "courses") return safe(row.assignments_count) + " tasks"
+        if (key === "members") return safe(row.member_status)
+        if (key === "assignments") return Number(row.is_closed || 0) ? "Closed" : "Open"
+        if (key === "submissions") return safe(row.status)
+        if (key === "grades") return row.final_score === null || row.final_score === undefined ? "Draft" : "Final"
+        if (key === "ai_results") return safe(row.score)
+        if (key === "materials") return safe(row.type)
+        if (key === "messages") return safe(row.state)
+        if (key === "schools") return safe(row.users_count) + " users"
+        if (key === "system") return safe(row.unit)
+        return currentSection().short
+    }
+
+    function accentOf(row) {
+        if (!row)
+            return primary
+        var status = statusOf(row).toUpperCase()
+        var role = asText(row.role).toUpperCase()
+        if (status.indexOf("BLOCK") >= 0 || status.indexOf("CLOSED") >= 0 || status.indexOf("FAILED") >= 0)
+            return red
+        if (status.indexOf("PENDING") >= 0 || status.indexOf("DRAFT") >= 0)
+            return amber
+        if (status.indexOf("OPEN") >= 0 || status.indexOf("ACTIVE") >= 0 || status.indexOf("FINAL") >= 0)
+            return teal
+        if (role === "ADMIN")
+            return violet
+        if (role === "TEACHER")
+            return teal
         return primary
     }
 
-    function countByRole(roleName) {
-        var n = 0
-        for (var i = 0; i < usersData.length; i++) {
-            if (asText(usersData[i].role).toUpperCase() === roleName) n++
-        }
-        return n
-    }
-
-    function countPendingUsers() {
-        var n = 0
-        for (var i = 0; i < usersData.length; i++) {
-            if (asText(usersData[i].status).toUpperCase() === "PENDING") n++
-        }
-        return n
-    }
-
-    function countClosedAssignments() {
-        var n = 0
-        for (var i = 0; i < assignmentsData.length; i++) {
-            if (assignmentsData[i].is_closed) n++
-        }
-        return n
-    }
-
-    function totalSubmissions() {
-        var n = 0
-        for (var i = 0; i < assignmentsData.length; i++) n += Number(assignmentsData[i].submission_count || 0)
-        return n
-    }
-
-    function currentArray() {
-        if (activeTab === 0) return schoolsData
-        if (activeTab === 1) return usersData
-        if (activeTab === 2) return coursesData
-        return assignmentsData
-    }
-
     function rowMatches(row, q) {
-        if (!q || q.length === 0) return true
+        if (!q || q.length === 0)
+            return true
         var joined = ""
-        for (var key in row) joined += " " + asText(row[key])
+        for (var key in row)
+            joined += " " + asText(row[key])
         return joined.toLowerCase().indexOf(q) >= 0
     }
 
     function makeListRow(row, sourceIndex) {
         var item = {}
-        for (var key in row) item[key] = row[key]
+        for (var key in row)
+            item[key] = row[key]
         item.sourceIndex = sourceIndex
-        item.rowIdText = idOf(row)
-        item.titleText = titleOf(row)
-        item.subTitleText = subTitleOf(row)
-        item.badgeTextValue = badgeText(row)
-        item.badgeColorValue = badgeColor(row)
+        item.rowIdText = rowId(row)
+        item.primaryText = primaryOf(row)
+        item.secondaryText = secondaryOf(row)
+        item.statusTextValue = statusOf(row)
+        item.accentValue = accentOf(row)
         return item
     }
 
     function rebuildFilter() {
         filteredModel.clear()
-        var data = currentArray()
+        var data = currentRows()
         var q = searchText.toLowerCase().trim()
         for (var i = 0; i < data.length; i++) {
-            if (rowMatches(data[i], q)) filteredModel.append(makeListRow(data[i], i))
+            if (rowMatches(data[i], q))
+                filteredModel.append(makeListRow(data[i], i))
         }
-        if (selectedRow === null && filteredModel.count > 0) selectBySource(filteredModel.get(0).sourceIndex)
+        if (selectedRow === null && filteredModel.count > 0)
+            selectBySource(filteredModel.get(0).sourceIndex)
     }
 
     function selectBySource(sourceIndex) {
-        var data = currentArray()
+        var data = currentRows()
         if (sourceIndex < 0 || sourceIndex >= data.length) {
             selectedRow = null
             selectedSourceIndex = -1
@@ -206,148 +317,311 @@ Item {
         selectedRow = data[sourceIndex]
     }
 
-    function switchTab(tab) {
-        activeTab = tab
+    function switchSection(index) {
+        activeSectionIndex = index
+        searchText = ""
         selectedRow = null
         selectedSourceIndex = -1
-        searchText = ""
         rebuildFilter()
+    }
+
+    function setStatus(message, isError) {
+        statusText = message && message.length > 0 ? message : "Ready"
+        statusIsError = isError === true
+        statusTimer.restart()
     }
 
     function refreshAll() {
-        if (typeof auth === "undefined") return
+        if (typeof auth === "undefined")
+            return
         loading = true
-        statusText = "Loading dashboard..."
+        statusIsError = false
+        statusText = "Refreshing data..."
         auth.get_admin_overview()
     }
 
-    function copyArrays(schools, users, courses, assignments) {
-        schoolsData = schools || []
-        usersData = users || []
-        coursesData = courses || []
-        assignmentsData = assignments || []
+    function logout() {
+        if (nav)
+            nav.pop()
+    }
+
+    function copyPayload(payload) {
+        var next = {}
+        for (var i = 0; i < sections.length; i++) {
+            var key = sections[i].key
+            next[key] = payload && payload[key] ? payload[key] : []
+        }
+        allData = next
+        stats = payload && payload.stats ? payload.stats : {}
         selectedRow = null
         selectedSourceIndex = -1
         rebuildFilter()
     }
 
-    function entityName() {
-        if (activeTab === 0) return "school"
-        if (activeTab === 1) return "user"
-        if (activeTab === 2) return "course"
-        return "assignment"
+    function roleOptions() {
+        return [
+            { label: "Admin", value: "ADMIN" },
+            { label: "Manager", value: "MANAGER" },
+            { label: "Teacher", value: "TEACHER" },
+            { label: "Student", value: "STUDENT" }
+        ]
     }
 
-    function entityTitle() {
-        if (activeTab === 0) return "Schools"
-        if (activeTab === 1) return "Users"
-        if (activeTab === 2) return "Courses"
-        return "Assignments"
+    function statusOptions() {
+        return [
+            { label: "Active", value: "ACTIVE" },
+            { label: "Pending", value: "PENDING" },
+            { label: "Blocked", value: "BLOCKED" }
+        ]
+    }
+
+    function schoolOptions() {
+        var out = []
+        var rows = rowsForKey("schools")
+        for (var i = 0; i < rows.length; i++)
+            out.push({ label: safe(rows[i].name) + " (#" + rows[i].school_id + ")", value: Number(rows[i].school_id) })
+        return out
+    }
+
+    function teacherOptions() {
+        var out = []
+        var rows = rowsForKey("users")
+        for (var i = 0; i < rows.length; i++) {
+            var role = asText(rows[i].role).toUpperCase()
+            if (role === "TEACHER" || role === "ADMIN")
+                out.push({ label: safe(rows[i].name) + " (#" + rows[i].id + ")", value: Number(rows[i].id) })
+        }
+        return out
+    }
+
+    function courseOptions() {
+        var out = []
+        var rows = rowsForKey("courses")
+        for (var i = 0; i < rows.length; i++)
+            out.push({ label: safe(rows[i].name) + " (#" + rows[i].course_id + ")", value: Number(rows[i].course_id) })
+        return out
+    }
+
+    function firstOptionValue(options, fallback) {
+        return options.length > 0 ? options[0].value : fallback
+    }
+
+    function entityForSectionKey(key) {
+        if (key === "schools") return "school"
+        if (key === "users") return "user"
+        if (key === "courses") return "course"
+        if (key === "assignments") return "assignment"
+        if (key === "materials") return "material"
+        if (key === "messages") return "message"
+        return key
     }
 
     function openCreate(entity) {
         editMode = "create"
         editEntity = entity
-        editRow = {}
-        if (entity === "user") {
-            editRow = { name: "", email: "", password: "123456", role: "STUDENT", school_id: schoolsData.length > 0 ? schoolsData[0].school_id : 1, status: "ACTIVE" }
+        if (entity === "school") {
+            editRow = { name: "", address: "", contact_name: "", contact_email: "" }
+        } else if (entity === "user") {
+            editRow = {
+                name: "", email: "", password: "123456", role: "STUDENT", status: "ACTIVE",
+                school_id: firstOptionValue(schoolOptions(), 1)
+            }
+        } else if (entity === "course") {
+            editRow = {
+                name: "", description: "",
+                teacher_id: firstOptionValue(teacherOptions(), userId),
+                school_id: firstOptionValue(schoolOptions(), 1)
+            }
+        } else if (entity === "assignment") {
+            editRow = {
+                title: "", description: "", due_date: defaultDueDate(),
+                course_id: firstOptionValue(courseOptions(), 1),
+                ai_enabled: false, is_closed: false,
+                attachment_path: "", attachment_name: ""
+            }
         }
-        if (entity === "school") editRow = { name: "", address: "", contact_name: "", contact_email: "" }
         editorVisible = true
     }
 
     function openEdit(entity, row) {
-        if (!row) return
+        if (!row)
+            return
         editMode = "edit"
         editEntity = entity
         editRow = {}
-        for (var key in row) editRow[key] = row[key]
+        for (var key in row)
+            editRow[key] = row[key]
         editorVisible = true
     }
 
     function requestDelete(entity, row) {
-        if (!row) return
+        if (!row)
+            return
         pendingDeleteEntity = entity
         pendingDeleteRow = row
         confirmVisible = true
     }
 
-    function performDelete() {
-        if (!pendingDeleteRow || typeof auth === "undefined") return
-        if (pendingDeleteEntity === "school") auth.admin_delete_school(Number(pendingDeleteRow.school_id))
-        else if (pendingDeleteEntity === "user") auth.admin_delete_user(Number(pendingDeleteRow.id))
-        else if (pendingDeleteEntity === "course") auth.delete_course(Number(pendingDeleteRow.course_id))
-        else if (pendingDeleteEntity === "assignment") auth.delete_assignment(Number(pendingDeleteRow.assignment_id))
-        confirmVisible = false
-        statusText = "Working..."
+    function validateEditor() {
+        if (!editRow)
+            return false
+        if (editEntity === "school" && safe(editRow.name) === "-") {
+            setStatus("School name is required.", true)
+            return false
+        }
+        if (editEntity === "user" && (safe(editRow.name) === "-" || safe(editRow.email) === "-")) {
+            setStatus("User name and email are required.", true)
+            return false
+        }
+        if (editEntity === "course" && safe(editRow.name) === "-") {
+            setStatus("Course name is required.", true)
+            return false
+        }
+        if (editEntity === "assignment" && safe(editRow.title) === "-") {
+            setStatus("Assignment title is required.", true)
+            return false
+        }
+        if (editEntity === "assignment" && editMode === "create" && Boolean(editRow.ai_enabled) && safe(editRow.attachment_path) === "-") {
+            setStatus("AI assignments need a rubric attachment.", true)
+            return false
+        }
+        return true
     }
 
     function saveEditor() {
-        if (!editRow || typeof auth === "undefined") return
+        if (!validateEditor() || typeof auth === "undefined")
+            return
+
         if (editEntity === "school") {
-            if (editMode === "create") auth.admin_create_school(asText(editRow.name), asText(editRow.address), asText(editRow.contact_name), asText(editRow.contact_email))
-            else auth.admin_update_school(Number(editRow.school_id), asText(editRow.name), asText(editRow.address), asText(editRow.contact_name), asText(editRow.contact_email))
+            if (editMode === "create")
+                auth.admin_create_school(asText(editRow.name), asText(editRow.address), asText(editRow.contact_name), asText(editRow.contact_email))
+            else
+                auth.admin_update_school(Number(editRow.school_id), asText(editRow.name), asText(editRow.address), asText(editRow.contact_name), asText(editRow.contact_email))
         } else if (editEntity === "user") {
-            if (editMode === "create") auth.admin_create_user(asText(editRow.name), asText(editRow.email), asText(editRow.password), asText(editRow.role).toUpperCase(), Number(editRow.school_id || 1), asText(editRow.status).toUpperCase())
-            else auth.admin_update_user(Number(editRow.id), asText(editRow.name), asText(editRow.email), asText(editRow.role).toUpperCase(), Number(editRow.school_id || 1), asText(editRow.status).toUpperCase())
+            if (editMode === "create")
+                auth.admin_create_user(asText(editRow.name), asText(editRow.email), asText(editRow.password), asText(editRow.role).toUpperCase(), Number(editRow.school_id || 1), asText(editRow.status).toUpperCase())
+            else
+                auth.admin_update_user(Number(editRow.id), asText(editRow.name), asText(editRow.email), asText(editRow.role).toUpperCase(), Number(editRow.school_id || 1), asText(editRow.status).toUpperCase())
         } else if (editEntity === "course") {
-            auth.admin_update_course(Number(editRow.course_id), asText(editRow.name), asText(editRow.description), Number(editRow.teacher_id || 0), Number(editRow.school_id || 1))
+            if (editMode === "create")
+                auth.create_course(asText(editRow.name), asText(editRow.description), Number(editRow.teacher_id || userId), Number(editRow.school_id || 1))
+            else
+                auth.admin_update_course(Number(editRow.course_id), asText(editRow.name), asText(editRow.description), Number(editRow.teacher_id || userId), Number(editRow.school_id || 1))
         } else if (editEntity === "assignment") {
-            auth.admin_update_assignment(Number(editRow.assignment_id), asText(editRow.title), asText(editRow.description), asText(editRow.due_date), Boolean(editRow.ai_enabled), Boolean(editRow.is_closed))
+            if (editMode === "create")
+                auth.create_assignment(Number(editRow.course_id || 1), asText(editRow.title), asText(editRow.description), asText(editRow.due_date), Boolean(editRow.ai_enabled), asText(editRow.attachment_path))
+            else
+                auth.admin_update_assignment(Number(editRow.assignment_id), asText(editRow.title), asText(editRow.description), asText(editRow.due_date), Boolean(editRow.ai_enabled), Boolean(editRow.is_closed))
         }
+
         editorVisible = false
-        statusText = "Saving..."
+        loading = true
+        setStatus("Saving changes...", false)
     }
 
     function setEditValue(key, value) {
-        if (!editRow) editRow = {}
+        if (!editRow)
+            editRow = {}
         editRow[key] = value
     }
 
+    function performDelete() {
+        if (!pendingDeleteRow || typeof auth === "undefined")
+            return
+        if (pendingDeleteEntity === "school")
+            auth.admin_delete_school(Number(pendingDeleteRow.school_id))
+        else if (pendingDeleteEntity === "user")
+            auth.admin_delete_user(Number(pendingDeleteRow.id))
+        else if (pendingDeleteEntity === "course")
+            auth.delete_course(Number(pendingDeleteRow.course_id))
+        else if (pendingDeleteEntity === "assignment")
+            auth.delete_assignment(Number(pendingDeleteRow.assignment_id))
+        else if (pendingDeleteEntity === "material")
+            auth.delete_material(Number(pendingDeleteRow.material_id))
+        else if (pendingDeleteEntity === "message")
+            auth.delete_message(Number(pendingDeleteRow.message_id))
+
+        confirmVisible = false
+        loading = true
+        setStatus("Deleting record...", false)
+    }
+
+    function updateUserStatus(row, statusValue) {
+        if (!row || typeof auth === "undefined")
+            return
+        auth.admin_update_user(Number(row.id), asText(row.name), asText(row.email), asText(row.role).toUpperCase(), Number(row.school_id || 1), statusValue)
+        loading = true
+        setStatus("Updating user status...", false)
+    }
+
+    function fileRefOf(row) {
+        if (!row)
+            return ""
+        if (asText(row.file_path).trim().length > 0)
+            return asText(row.file_path)
+        if (asText(row.attachment_path).trim().length > 0)
+            return asText(row.attachment_path)
+        return ""
+    }
+
+    function openFilePicker(target) {
+        fileDialogTarget = target
+        fileDialog.open()
+    }
+
     function detailRows(row) {
-        if (!row) return []
-        if (activeTab === 0) return [
-            ["School ID", safe(row.school_id)],
-            ["Name", safe(row.name)],
-            ["Address", safe(row.address)],
-            ["Contact name", safe(row.contact_name)],
-            ["Contact email", safe(row.contact_email)]
-        ]
-        if (activeTab === 1) return [
-            ["User ID", safe(row.id)],
-            ["Name", safe(row.name)],
-            ["Email", safe(row.email)],
-            ["Role", safe(row.role)],
-            ["Status", safe(row.status)],
-            ["School ID", safe(row.school_id)],
-            ["Created", shortDate(row.created_at)]
-        ]
-        if (activeTab === 2) return [
-            ["Course ID", safe(row.course_id)],
-            ["Name", safe(row.name)],
-            ["Description", safe(row.description)],
-            ["Class code", safe(row.class_code)],
-            ["Teacher", safe(row.teacher_name)],
-            ["Teacher ID", safe(row.teacher_id)],
-            ["School", safe(row.school_name)],
-            ["School ID", safe(row.school_id)],
-            ["Active students", safe(row.students)],
-            ["Created", shortDate(row.created_at)]
-        ]
+        var rows = []
+        if (!row)
+            return rows
+        var skip = { sourceIndex: true, rowIdText: true, primaryText: true, secondaryText: true, statusTextValue: true, accentValue: true }
+        for (var key in row) {
+            if (skip[key] === true)
+                continue
+            rows.push({ label: humanize(key), value: valueForDetail(row[key], key) })
+        }
+        return rows
+    }
+
+    function humanize(key) {
+        var parts = asText(key).split("_")
+        var out = []
+        for (var i = 0; i < parts.length; i++) {
+            var p = parts[i]
+            out.push(p.length > 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)
+        }
+        return out.join(" ")
+    }
+
+    function valueForDetail(value, key) {
+        if (key.indexOf("bytes") >= 0)
+            return formatBytes(value)
+        if (key.indexOf("_at") >= 0 || key === "created_at" || key === "submitted_at" || key === "due_date")
+            return shortDate(value)
+        if (typeof value === "boolean")
+            return value ? "Yes" : "No"
+        if (key === "ai_enabled" || key === "is_closed")
+            return Number(value || 0) ? "Yes" : "No"
+        return safe(value)
+    }
+
+    function statCards() {
+        var submissions = countFor("submissions")
+        var graded = countFor("grades")
+        var withAi = 0
+        var submissionRows = rowsForKey("submissions")
+        for (var i = 0; i < submissionRows.length; i++) {
+            if (Number(submissionRows[i].ai_results_count || 0) > 0)
+                withAi++
+        }
+        var aiCoverage = submissions > 0 ? Math.round((withAi / submissions) * 100) + "%" : "0%"
+        var storageBytes = stats && stats.system ? stats.system.storage_size_bytes : 0
         return [
-            ["Assignment ID", safe(row.assignment_id)],
-            ["Title", safe(row.title)],
-            ["Description", safe(row.description)],
-            ["Course", safe(row.course_name)],
-            ["Course ID", safe(row.course_id)],
-            ["Teacher", safe(row.teacher_name)],
-            ["Due date", shortDate(row.due_date)],
-            ["AI enabled", row.ai_enabled ? "Yes" : "No"],
-            ["Closed", row.is_closed ? "Yes" : "No"],
-            ["Submissions", safe(row.submission_count)],
-            ["Attachment file", fileName(row.attachment_path)],
-            ["Attachment path", safe(row.attachment_path)],
-            ["Created", shortDate(row.created_at)]
+            { label: "Schools", value: countFor("schools"), note: countFor("courses") + " courses", color: primary },
+            { label: "Users", value: countFor("users"), note: countByValue(rowsForKey("users"), "role", "TEACHER") + " teachers / " + countByValue(rowsForKey("users"), "role", "STUDENT") + " students", color: teal },
+            { label: "Assignments", value: countFor("assignments"), note: countByValue(rowsForKey("assignments"), "is_closed", "1") + " closed", color: amber },
+            { label: "Submissions", value: submissions, note: graded + " graded", color: violet },
+            { label: "AI Coverage", value: aiCoverage, note: countFor("ai_results") + " AI results", color: primary },
+            { label: "Storage", value: formatBytes(storageBytes), note: countFor("materials") + " materials", color: teal }
         ]
     }
 
@@ -355,28 +629,95 @@ Item {
 
     Connections {
         target: typeof auth !== "undefined" ? auth : null
-        function onAdminOverviewResult(success, message, schools, users, courses, assignments) {
+
+        function onAdminOverviewResult(success, message, payload) {
             loading = false
-            statusText = success ? "Dashboard updated" : message
-            if (success) copyArrays(schools, users, courses, assignments)
+            if (success) {
+                copyPayload(payload)
+                setStatus("Dashboard updated", false)
+            } else {
+                setStatus(message, true)
+            }
         }
+
         function onAdminActionResult(success, message, actionName) {
-            statusText = message
-            if (success) refreshAll()
+            setStatus(message, !success)
+            if (success)
+                refreshAll()
+            else
+                loading = false
         }
+
+        function onCreateCourseResult(success, message, courseId) {
+            setStatus(success ? "Course created successfully." : message, !success)
+            if (success)
+                refreshAll()
+            else
+                loading = false
+        }
+
+        function onCreateAssignmentResult(success, message, courseId, assignmentId) {
+            setStatus(success ? "Assignment created successfully." : message, !success)
+            if (success)
+                refreshAll()
+            else
+                loading = false
+        }
+
         function onDeleteCourseResult(success, message, courseId) {
-            statusText = message
-            if (success) refreshAll()
+            setStatus(message, !success)
+            if (success)
+                refreshAll()
+            else
+                loading = false
         }
+
         function onDeleteAssignmentResult(success, message, assignmentId, courseId) {
-            statusText = message
-            if (success) refreshAll()
+            setStatus(message, !success)
+            if (success)
+                refreshAll()
+            else
+                loading = false
+        }
+
+        function onDeleteMaterialResult(success, message, courseId, materialId) {
+            setStatus(message, !success)
+            if (success)
+                refreshAll()
+            else
+                loading = false
+        }
+
+        function onDeleteMessageResult(success, message, courseId, messageId) {
+            setStatus(message, !success)
+            if (success)
+                refreshAll()
+            else
+                loading = false
+        }
+
+        function onDownloadFileResult(success, message, filePath, savedPath) {
+            setStatus(success ? "Downloaded to " + savedPath : message, !success)
+        }
+    }
+
+    FileDialog {
+        id: fileDialog
+        title: "Select file"
+        fileMode: FileDialog.OpenFile
+        onAccepted: {
+            var path = selectedFile.toString()
+            if (root.fileDialogTarget === "assignment_rubric") {
+                root.setEditValue("attachment_path", path)
+                root.setEditValue("attachment_name", root.fileNameFromPath(path))
+                root.setStatus("Rubric selected: " + root.fileNameFromPath(path), false)
+            }
         }
     }
 
     Rectangle {
         anchors.fill: parent
-        color: pageBg
+        color: bg
     }
 
     RowLayout {
@@ -387,7 +728,7 @@ Item {
             Layout.preferredWidth: sidebarWidth
             Layout.fillHeight: true
             visible: !narrow
-            color: dark
+            color: side
 
             ColumnLayout {
                 anchors.fill: parent
@@ -398,68 +739,140 @@ Item {
                     Layout.fillWidth: true
                     spacing: 10
                     Rectangle {
-                        width: 42
-                        height: 42
-                        radius: 14
-                        gradient: Gradient {
-                            GradientStop { position: 0; color: "#8B5CF6" }
-                            GradientStop { position: 1; color: "#4F46E5" }
+                        Layout.preferredWidth: 42
+                        Layout.preferredHeight: 42
+                        radius: 10
+                        color: primary
+                        Text {
+                            anchors.centerIn: parent
+                            text: "C"
+                            color: "white"
+                            font.pixelSize: 20
+                            font.bold: true
                         }
-                        Text { anchors.centerIn: parent; text: "C"; color: "white"; font.pixelSize: 20; font.bold: true }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: 0
-                        Text { text: "Classify"; color: "white"; font.pixelSize: 21; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                        Text { text: "System Admin"; color: "#CBD5E1"; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true }
+                        spacing: 1
+                        Text { text: "Classify"; color: "white"; font.pixelSize: 21; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: "System control"; color: "#CBD5E1"; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
                     }
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#233047" }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#263244" }
 
-                ColumnLayout {
+                Flickable {
                     Layout.fillWidth: true
-                    spacing: 8
-                    Repeater {
-                        model: ["Schools", "Users", "Courses", "Assignments"]
-                        delegate: Rectangle {
-                            Layout.fillWidth: true
-                            height: 46
-                            radius: 14
-                            color: activeTab === index ? "#334155" : "transparent"
-                            border.width: activeTab === index ? 1 : 0
-                            border.color: "#475569"
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 14
-                                anchors.rightMargin: 12
-                                spacing: 10
-                                Text { text: ["🏫", "👥", "📚", "📝"][index]; font.pixelSize: 16 }
-                                Text { text: modelData; color: activeTab === index ? "white" : "#CBD5E1"; font.pixelSize: 14; font.bold: activeTab === index; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: [schoolsData.length, usersData.length, coursesData.length, assignmentsData.length][index]; color: "#A5B4FC"; font.pixelSize: 12; font.bold: true }
+                    Layout.fillHeight: true
+                    clip: true
+                    contentWidth: width
+                    contentHeight: navColumn.height
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    Column {
+                        id: navColumn
+                        width: parent.width
+                        spacing: 6
+
+                        Repeater {
+                            model: sections
+                            delegate: Rectangle {
+                                width: navColumn.width
+                                height: 42
+                                radius: 10
+                                color: activeSectionIndex === index ? "#243145" : "transparent"
+                                border.width: activeSectionIndex === index ? 1 : 0
+                                border.color: "#334155"
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    spacing: 9
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 30
+                                        Layout.preferredHeight: 26
+                                        radius: 8
+                                        color: activeSectionIndex === index ? primary : "#1F2937"
+                                        Text { anchors.centerIn: parent; text: modelData.short; color: "white"; font.pixelSize: 10; font.bold: true }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.label
+                                        color: activeSectionIndex === index ? "white" : "#CBD5E1"
+                                        font.pixelSize: 13
+                                        font.bold: activeSectionIndex === index
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        text: countFor(modelData.key)
+                                        color: "#93C5FD"
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: switchSection(index)
+                                }
                             }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: switchTab(index) }
                         }
                     }
                 }
 
-                Item { Layout.fillHeight: true }
-
                 Rectangle {
                     Layout.fillWidth: true
-                    radius: 18
-                    color: "#111C31"
-                    border.color: "#233047"
-                    height: 118
+                    Layout.preferredHeight: 158
+                    radius: 14
+                    color: "#172033"
+                    border.color: "#28364C"
+
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 5
-                        Text { text: "Signed in as"; color: "#94A3B8"; font.pixelSize: 11 }
-                        Text { text: userName || "Admin"; color: "white"; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
-                        Text { text: "User ID: " + userId; color: "#CBD5E1"; font.pixelSize: 12 }
-                        Rectangle { Layout.fillWidth: true; height: 34; radius: 12; color: "#1E293B"; border.color: "#334155"
-                            Text { anchors.centerIn: parent; text: statusText; color: "#E2E8F0"; font.pixelSize: 11; elide: Text.ElideRight; width: parent.width - 18; horizontalAlignment: Text.AlignHCenter }
+                        anchors.margins: 12
+                        spacing: 4
+                        Text { text: "Signed in"; color: "#94A3B8"; font.pixelSize: 11 }
+                        Text { text: userName || "Admin"; color: "white"; font.pixelSize: 15; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: "User ID: " + userId; color: "#CBD5E1"; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 32
+                            radius: 9
+                            color: statusIsError ? "#3B1D24" : "#1F2937"
+                            border.color: statusIsError ? "#7F1D1D" : "#334155"
+                            Text {
+                                anchors.centerIn: parent
+                                width: parent.width - 16
+                                text: statusText
+                                color: statusIsError ? "#FCA5A5" : "#E2E8F0"
+                                font.pixelSize: 10
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 34
+                            radius: 9
+                            color: "#F8FAFC"
+                            border.color: "#E2E8F0"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "Logout"
+                                color: "#0F172A"
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.logout()
+                            }
                         }
                     }
                 }
@@ -472,15 +885,15 @@ Item {
             Layout.fillHeight: true
             clip: true
             contentWidth: width
-            contentHeight: contentColumn.height + 44
+            contentHeight: contentColumn.height + 34
             boundsBehavior: Flickable.StopAtBounds
 
             ColumnLayout {
                 id: contentColumn
                 width: mainFlick.width
-                spacing: 18
+                spacing: 16
 
-                Item { Layout.fillWidth: true; height: 22 }
+                Item { Layout.fillWidth: true; Layout.preferredHeight: 22 }
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -491,20 +904,27 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 4
-                        Text { text: "Admin Dashboard"; color: ink; font.pixelSize: narrow ? 26 : 34; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Text { text: "Full control over schools, users, courses and assignments"; color: muted; font.pixelSize: 14; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: "Admin Control Center"; color: ink; font.pixelSize: narrow ? 25 : 32; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: "A full operational view across schools, users, classes, assignments, submissions, AI, files and messages."; color: muted; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
                     }
 
                     Rectangle {
-                        width: narrow ? 104 : 132
-                        height: 42
-                        radius: 14
+                        Layout.preferredWidth: loading ? 118 : 108
+                        Layout.preferredHeight: 40
+                        radius: 10
                         color: loading ? "#CBD5E1" : primary
-                        Row { anchors.centerIn: parent; spacing: 8
-                            Text { text: loading ? "⏳" : "↻"; color: "white"; font.pixelSize: 15 }
-                            Text { text: loading ? "Loading" : "Refresh"; color: "white"; font.pixelSize: 13; font.bold: true }
-                        }
+                        Text { anchors.centerIn: parent; text: loading ? "Loading" : "Refresh"; color: "white"; font.pixelSize: 13; font.bold: true }
                         MouseArea { anchors.fill: parent; enabled: !loading; cursorShape: Qt.PointingHandCursor; onClicked: refreshAll() }
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 94
+                        Layout.preferredHeight: 40
+                        radius: 10
+                        color: panel
+                        border.color: line
+                        Text { anchors.centerIn: parent; text: "Logout"; color: ink; font.pixelSize: 13; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.logout() }
                     }
                 }
 
@@ -512,33 +932,28 @@ Item {
                     Layout.fillWidth: true
                     Layout.leftMargin: narrow ? 14 : 26
                     Layout.rightMargin: narrow ? 14 : 26
-                    spacing: 12
+                    spacing: 10
 
                     Repeater {
-                        model: [
-                            { label: "Schools", value: schoolsData.length, note: "active organizations", accent: primary },
-                            { label: "Users", value: usersData.length, note: countByRole("STUDENT") + " students · " + countByRole("TEACHER") + " teachers", accent: good },
-                            { label: "Courses", value: coursesData.length, note: "classes in system", accent: primary2 },
-                            { label: "Assignments", value: assignmentsData.length, note: countClosedAssignments() + " closed · " + totalSubmissions() + " submissions", accent: warn },
-                            { label: "Pending users", value: countPendingUsers(), note: "waiting approval", accent: bad }
-                        ]
+                        model: statCards()
                         delegate: Rectangle {
-                            width: Math.max(190, Math.min(260, (mainFlick.width - (narrow ? 48 : 90)) / (narrow ? 2 : 5)))
-                            height: 112
-                            radius: 22
-                            color: panelBg
+                            width: Math.max(178, Math.min(244, (mainFlick.width - (narrow ? 46 : 84)) / (narrow ? 2 : 6)))
+                            height: 96
+                            radius: 12
+                            color: panel
                             border.color: line
-                            Rectangle { width: 5; height: parent.height - 34; radius: 3; color: modelData.accent; anchors.left: parent.left; anchors.leftMargin: 16; anchors.verticalCenter: parent.verticalCenter }
+
+                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 4; radius: 2; color: modelData.color }
                             Column {
                                 anchors.left: parent.left
-                                anchors.leftMargin: 34
+                                anchors.leftMargin: 18
                                 anchors.right: parent.right
-                                anchors.rightMargin: 16
+                                anchors.rightMargin: 12
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: 5
-                                Text { text: modelData.label; color: muted; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight; width: parent.width }
-                                Text { text: modelData.value; color: ink; font.pixelSize: 30; font.bold: true; elide: Text.ElideRight; width: parent.width }
-                                Text { text: modelData.note; color: faint; font.pixelSize: 11; elide: Text.ElideRight; width: parent.width }
+                                spacing: 4
+                                Text { text: modelData.label; color: muted; font.pixelSize: 11; font.bold: true; width: parent.width; elide: Text.ElideRight }
+                                Text { text: modelData.value; color: ink; font.pixelSize: 25; font.bold: true; width: parent.width; elide: Text.ElideRight }
+                                Text { text: modelData.note; color: faint; font.pixelSize: 10; width: parent.width; elide: Text.ElideRight }
                             }
                         }
                     }
@@ -548,52 +963,70 @@ Item {
                     Layout.fillWidth: true
                     Layout.leftMargin: narrow ? 14 : 26
                     Layout.rightMargin: narrow ? 14 : 26
-                    height: narrow ? 760 : Math.max(620, root.height - 260)
-                    radius: 26
-                    color: panelBg
+                    Layout.preferredHeight: narrow ? 760 : Math.max(620, root.height - 232)
+                    radius: 16
+                    color: panel
                     border.color: line
                     clip: true
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: narrow ? 12 : 18
-                        spacing: 14
+                        anchors.margins: 16
+                        spacing: 12
 
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 12
 
-                            Text { text: entityTitle(); color: ink; font.pixelSize: 22; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text { text: currentSection().label; color: ink; font.pixelSize: 22; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: filteredModel.count + " visible rows out of " + currentRows().length; color: muted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                            }
 
                             Rectangle {
-                                visible: activeTab === 0 || activeTab === 1
-                                width: narrow ? 112 : 142
-                                height: 38
-                                radius: 13
+                                visible: currentSection().create
+                                Layout.preferredWidth: 126
+                                Layout.preferredHeight: 38
+                                radius: 10
                                 color: primarySoft
-                                border.color: "#C7D2FE"
-                                Text { anchors.centerIn: parent; text: activeTab === 0 ? "+ School" : "+ User"; color: primary; font.pixelSize: 13; font.bold: true }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: openCreate(activeTab === 0 ? "school" : "user") }
+                                border.color: "#BFDBFE"
+                                Text { anchors.centerIn: parent; text: "New " + entityForSectionKey(currentSection().key); color: primary; font.pixelSize: 12; font.bold: true; width: parent.width - 14; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: openCreate(entityForSectionKey(currentSection().key)) }
                             }
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
+
                             Rectangle {
                                 Layout.fillWidth: true
-                                height: 42
-                                radius: 14
-                                color: "#F8FAFC"
+                                Layout.preferredHeight: 40
+                                radius: 10
+                                color: panel2
                                 border.color: line
-                                Text { text: "Search everything..."; color: faint; font.pixelSize: 13; anchors.left: parent.left; anchors.leftMargin: 16; anchors.verticalCenter: parent.verticalCenter; visible: searchInput.text.length === 0 }
+
+                                Text {
+                                    text: "Search this data set"
+                                    color: faint
+                                    font.pixelSize: 13
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: searchInput.text.length === 0
+                                }
+
                                 TextInput {
                                     id: searchInput
                                     anchors.fill: parent
-                                    anchors.leftMargin: 16
-                                    anchors.rightMargin: 16
+                                    anchors.leftMargin: 14
+                                    anchors.rightMargin: 14
                                     verticalAlignment: TextInput.AlignVCenter
                                     color: ink
+                                    selectionColor: "#BFDBFE"
+                                    selectedTextColor: ink
                                     font.pixelSize: 14
                                     clip: true
                                     text: searchText
@@ -607,27 +1040,27 @@ Item {
                             }
 
                             Rectangle {
-                                width: 104
-                                height: 42
-                                radius: 14
-                                color: "#F8FAFC"
-                                border.color: line
-                                Text { anchors.centerIn: parent; text: filteredModel.count + " rows"; color: muted; font.pixelSize: 13; font.bold: true }
+                                Layout.preferredWidth: 110
+                                Layout.preferredHeight: 40
+                                radius: 10
+                                color: statusIsError ? redSoft : panel2
+                                border.color: statusIsError ? "#FECACA" : line
+                                Text { anchors.centerIn: parent; text: statusText; color: statusIsError ? red : muted; font.pixelSize: 11; font.bold: true; width: parent.width - 14; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
                             }
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            spacing: 14
+                            spacing: 12
 
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                Layout.minimumWidth: narrow ? 0 : 520
-                                radius: 20
-                                color: "#FAFBFD"
-                                border.color: softLine
+                                Layout.minimumWidth: narrow ? 0 : 560
+                                radius: 12
+                                color: "#FCFDFF"
+                                border.color: lineSoft
                                 clip: true
 
                                 ColumnLayout {
@@ -636,17 +1069,18 @@ Item {
 
                                     Rectangle {
                                         Layout.fillWidth: true
-                                        height: 42
-                                        color: "#F8FAFC"
+                                        Layout.preferredHeight: 42
+                                        color: panel2
+                                        border.color: lineSoft
                                         RowLayout {
                                             anchors.fill: parent
-                                            anchors.leftMargin: 16
-                                            anchors.rightMargin: 16
+                                            anchors.leftMargin: 14
+                                            anchors.rightMargin: 12
                                             spacing: 10
-                                            Text { text: "ID"; color: muted; font.pixelSize: 11; font.bold: true; width: 52 }
-                                            Text { text: "Main information"; color: muted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
-                                            Text { text: "Status"; color: muted; font.pixelSize: 11; font.bold: true; width: narrow ? 76 : 112; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "Actions"; color: muted; font.pixelSize: 11; font.bold: true; width: narrow ? 122 : 170; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "ID"; color: muted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 68; elide: Text.ElideRight }
+                                            Text { text: "Record"; color: muted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                            Text { text: "State"; color: muted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 112; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+                                            Text { text: "Actions"; color: muted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 164; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
                                         }
                                     }
 
@@ -657,61 +1091,70 @@ Item {
                                         clip: true
                                         model: filteredModel
                                         boundsBehavior: Flickable.StopAtBounds
+
                                         delegate: Rectangle {
                                             width: listView.width
-                                            height: narrow ? 82 : 76
+                                            height: 72
                                             color: selectedSourceIndex === sourceIndex ? primarySoft : (index % 2 === 0 ? "#FFFFFF" : "#FCFDFF")
-                                            border.color: selectedSourceIndex === sourceIndex ? "#C7D2FE" : softLine
                                             border.width: selectedSourceIndex === sourceIndex ? 1 : 0
+                                            border.color: "#BFDBFE"
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: selectBySource(sourceIndex)
+                                            }
 
                                             RowLayout {
                                                 anchors.fill: parent
-                                                anchors.leftMargin: 16
+                                                anchors.leftMargin: 14
                                                 anchors.rightMargin: 12
                                                 spacing: 10
+                                                z: 1
 
                                                 Text {
-                                                    text: rowIdText
+                                                    text: shortText(rowIdText, 10)
                                                     color: muted
                                                     font.pixelSize: 12
                                                     font.bold: true
-                                                    width: 52
+                                                    Layout.preferredWidth: 68
                                                     elide: Text.ElideRight
                                                     verticalAlignment: Text.AlignVCenter
                                                 }
 
                                                 ColumnLayout {
                                                     Layout.fillWidth: true
-                                                    spacing: 4
-                                                    Text { text: titleText; color: ink; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight; maximumLineCount: 1 }
-                                                    Text { text: subTitleText; color: muted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight; maximumLineCount: 1 }
+                                                    spacing: 3
+                                                    Text { text: primaryText; color: ink; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; maximumLineCount: 1; elide: Text.ElideRight }
+                                                    Text { text: secondaryText; color: muted; font.pixelSize: 12; Layout.fillWidth: true; maximumLineCount: 1; elide: Text.ElideRight }
                                                 }
 
                                                 Rectangle {
-                                                    width: narrow ? 76 : 112
-                                                    height: 28
-                                                    radius: 14
-                                                    color: primarySoft
+                                                    Layout.preferredWidth: 112
+                                                    Layout.preferredHeight: 28
+                                                    radius: 8
+                                                    color: accentValue === red ? redSoft : (accentValue === amber ? amberSoft : (accentValue === teal ? tealSoft : primarySoft))
                                                     border.color: line
-                                                    Text { anchors.centerIn: parent; text: shortText(badgeTextValue, narrow ? 8 : 16); color: badgeColorValue; font.pixelSize: 11; font.bold: true; elide: Text.ElideRight; width: parent.width - 12; horizontalAlignment: Text.AlignHCenter }
+                                                    Text { anchors.centerIn: parent; text: shortText(statusTextValue, 14); color: accentValue; font.pixelSize: 11; font.bold: true; width: parent.width - 12; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
                                                 }
 
                                                 RowLayout {
-                                                    width: narrow ? 122 : 170
+                                                    Layout.preferredWidth: 164
                                                     spacing: 6
                                                     Rectangle {
-                                                        Layout.preferredWidth: narrow ? 54 : 76
-                                                        height: 32
-                                                        radius: 11
-                                                        color: "#F1F5F9"
+                                                        Layout.preferredWidth: 72
+                                                        Layout.preferredHeight: 32
+                                                        radius: 8
+                                                        color: panel2
                                                         border.color: line
-                                                        Text { anchors.centerIn: parent; text: narrow ? "View" : "Details"; color: ink; font.pixelSize: 12; font.bold: true }
+                                                        Text { anchors.centerIn: parent; text: "Details"; color: ink; font.pixelSize: 12; font.bold: true }
                                                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: selectBySource(sourceIndex) }
                                                     }
                                                     Rectangle {
-                                                        Layout.preferredWidth: narrow ? 54 : 76
-                                                        height: 32
-                                                        radius: 11
+                                                        visible: currentSection().edit
+                                                        Layout.preferredWidth: 72
+                                                        Layout.preferredHeight: 32
+                                                        radius: 8
                                                         color: primary
                                                         Text { anchors.centerIn: parent; text: "Edit"; color: "white"; font.pixelSize: 12; font.bold: true }
                                                         MouseArea {
@@ -719,18 +1162,11 @@ Item {
                                                             cursorShape: Qt.PointingHandCursor
                                                             onClicked: {
                                                                 selectBySource(sourceIndex)
-                                                                openEdit(entityName(), selectedRow)
+                                                                openEdit(entityForSectionKey(currentSection().key), selectedRow)
                                                             }
                                                         }
                                                     }
                                                 }
-                                            }
-
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                acceptedButtons: Qt.LeftButton
-                                                z: -1
-                                                onClicked: selectBySource(sourceIndex)
                                             }
                                         }
 
@@ -738,15 +1174,15 @@ Item {
                                             visible: filteredModel.count === 0
                                             anchors.centerIn: parent
                                             width: Math.min(parent.width - 40, 360)
-                                            height: 120
-                                            radius: 20
+                                            height: 118
+                                            radius: 12
                                             color: "#FFFFFF"
                                             border.color: line
                                             Column {
                                                 anchors.centerIn: parent
-                                                spacing: 8
+                                                spacing: 7
                                                 Text { text: "No rows found"; color: ink; font.pixelSize: 18; font.bold: true; anchors.horizontalCenter: parent.horizontalCenter }
-                                                Text { text: "Try another search or refresh the dashboard"; color: muted; font.pixelSize: 12; anchors.horizontalCenter: parent.horizontalCenter }
+                                                Text { text: "Try another search or refresh the dashboard."; color: muted; font.pixelSize: 12; anchors.horizontalCenter: parent.horizontalCenter }
                                             }
                                         }
                                     }
@@ -754,94 +1190,136 @@ Item {
                             }
 
                             Rectangle {
-                                Layout.preferredWidth: compact ? 310 : 390
+                                Layout.preferredWidth: compact ? 330 : 410
                                 Layout.fillHeight: true
                                 visible: !narrow
-                                radius: 20
-                                color: "#FFFFFF"
+                                radius: 12
+                                color: panel
                                 border.color: line
                                 clip: true
 
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 18
+                                    anchors.margins: 16
                                     spacing: 12
 
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: 10
+
                                         ColumnLayout {
                                             Layout.fillWidth: true
-                                            spacing: 3
-                                            Text { text: selectedRow ? titleOf(selectedRow) : "Select a row"; color: ink; font.pixelSize: 19; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                            Text { text: selectedRow ? entityName().toUpperCase() + " DETAILS" : "Nothing selected"; color: faint; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        }
-                                        Rectangle {
-                                            visible: selectedRow !== null
-                                            width: 52
-                                            height: 32
-                                            radius: 11
-                                            color: primarySoft
-                                            Text { anchors.centerIn: parent; text: "Edit"; color: primary; font.pixelSize: 12; font.bold: true }
-                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: openEdit(entityName(), selectedRow) }
+                                            spacing: 2
+                                            Text { text: selectedRow ? primaryOf(selectedRow) : "Select a record"; color: ink; font.pixelSize: 19; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                            Text { text: selectedRow ? currentSection().label.toUpperCase() : "Details and actions"; color: faint; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
                                         }
                                     }
 
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: softLine }
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        visible: selectedRow !== null
+
+                                        Rectangle {
+                                            visible: currentSection().edit
+                                            width: 76
+                                            height: 34
+                                            radius: 9
+                                            color: primary
+                                            Text { anchors.centerIn: parent; text: "Edit"; color: "white"; font.pixelSize: 12; font.bold: true }
+                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: openEdit(entityForSectionKey(currentSection().key), selectedRow) }
+                                        }
+
+                                        Rectangle {
+                                            visible: currentSection().remove
+                                            width: 82
+                                            height: 34
+                                            radius: 9
+                                            color: redSoft
+                                            border.color: "#FECACA"
+                                            Text { anchors.centerIn: parent; text: "Delete"; color: red; font.pixelSize: 12; font.bold: true }
+                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: requestDelete(entityForSectionKey(currentSection().key), selectedRow) }
+                                        }
+
+                                        Rectangle {
+                                            visible: fileRefOf(selectedRow).length > 0
+                                            width: 98
+                                            height: 34
+                                            radius: 9
+                                            color: tealSoft
+                                            border.color: "#A7F3D0"
+                                            Text { anchors.centerIn: parent; text: "Download"; color: teal; font.pixelSize: 12; font.bold: true }
+                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: auth.download_file(fileRefOf(selectedRow)) }
+                                        }
+                                    }
+
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        visible: selectedRow !== null && currentSection().key === "users"
+
+                                        Rectangle {
+                                            width: 82
+                                            height: 32
+                                            radius: 9
+                                            color: tealSoft
+                                            border.color: "#A7F3D0"
+                                            Text { anchors.centerIn: parent; text: "Activate"; color: teal; font.pixelSize: 11; font.bold: true }
+                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: updateUserStatus(selectedRow, "ACTIVE") }
+                                        }
+                                        Rectangle {
+                                            width: 82
+                                            height: 32
+                                            radius: 9
+                                            color: amberSoft
+                                            border.color: "#FDE68A"
+                                            Text { anchors.centerIn: parent; text: "Pending"; color: amber; font.pixelSize: 11; font.bold: true }
+                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: updateUserStatus(selectedRow, "PENDING") }
+                                        }
+                                        Rectangle {
+                                            width: 82
+                                            height: 32
+                                            radius: 9
+                                            color: redSoft
+                                            border.color: "#FECACA"
+                                            Text { anchors.centerIn: parent; text: "Block"; color: red; font.pixelSize: 11; font.bold: true }
+                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: updateUserStatus(selectedRow, "BLOCKED") }
+                                        }
+                                    }
+
+                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: lineSoft }
 
                                     Flickable {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         clip: true
                                         contentWidth: width
-                                        contentHeight: detailsColumn.height
+                                        contentHeight: detailColumn.height
                                         boundsBehavior: Flickable.StopAtBounds
 
                                         ColumnLayout {
-                                            id: detailsColumn
+                                            id: detailColumn
                                             width: parent.width
-                                            spacing: 10
+                                            spacing: 9
 
                                             Repeater {
                                                 model: detailRows(selectedRow)
                                                 delegate: Rectangle {
                                                     Layout.fillWidth: true
-                                                    radius: 14
-                                                    color: "#F8FAFC"
-                                                    border.color: softLine
-                                                    height: Math.max(58, valueText.implicitHeight + 32)
+                                                    radius: 10
+                                                    color: panel2
+                                                    border.color: lineSoft
+                                                    Layout.preferredHeight: Math.max(54, detailValue.implicitHeight + 30)
+
                                                     ColumnLayout {
                                                         anchors.fill: parent
-                                                        anchors.margins: 12
+                                                        anchors.margins: 10
                                                         spacing: 3
-                                                        Text { text: modelData[0]; color: faint; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                                        Text { id: valueText; text: modelData[1]; color: ink; font.pixelSize: 13; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; maximumLineCount: 4; elide: Text.ElideRight }
+                                                        Text { text: modelData.label; color: faint; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                                                        Text { id: detailValue; text: modelData.value; color: ink; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true; maximumLineCount: 5; elide: Text.ElideRight }
                                                     }
                                                 }
                                             }
-                                        }
-                                    }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        visible: selectedRow !== null
-                                        spacing: 8
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            height: 40
-                                            radius: 13
-                                            color: primary
-                                            Text { anchors.centerIn: parent; text: "Edit record"; color: "white"; font.pixelSize: 13; font.bold: true }
-                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: openEdit(entityName(), selectedRow) }
-                                        }
-                                        Rectangle {
-                                            width: 98
-                                            height: 40
-                                            radius: 13
-                                            color: badSoft
-                                            border.color: "#FECACA"
-                                            Text { anchors.centerIn: parent; text: "Delete"; color: bad; font.pixelSize: 13; font.bold: true }
-                                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: requestDelete(entityName(), selectedRow) }
                                         }
                                     }
                                 }
@@ -850,55 +1328,31 @@ Item {
                     }
                 }
 
-                Item { Layout.fillWidth: true; height: 22 }
+                Item { Layout.fillWidth: true; Layout.preferredHeight: 18 }
             }
-        }
-    }
-
-    Rectangle {
-        visible: narrow && selectedRow !== null
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: 76
-        color: "#FFFFFF"
-        border.color: line
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 14
-            anchors.rightMargin: 14
-            spacing: 10
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                Text { text: titleOf(selectedRow); color: ink; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                Text { text: subTitleOf(selectedRow); color: muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-            }
-            Rectangle { width: 70; height: 40; radius: 13; color: primary; Text { anchors.centerIn: parent; text: "Edit"; color: "white"; font.pixelSize: 13; font.bold: true } MouseArea { anchors.fill: parent; onClicked: openEdit(entityName(), selectedRow) } }
-            Rectangle { width: 76; height: 40; radius: 13; color: badSoft; border.color: "#FECACA"; Text { anchors.centerIn: parent; text: "Delete"; color: bad; font.pixelSize: 13; font.bold: true } MouseArea { anchors.fill: parent; onClicked: requestDelete(entityName(), selectedRow) } }
         }
     }
 
     Rectangle {
         visible: editorVisible
         anchors.fill: parent
-        color: "#990F172A"
+        color: "#99111827"
         z: 50
 
         MouseArea { anchors.fill: parent }
 
         Rectangle {
-            width: Math.min(root.width - 28, 660)
-            height: Math.min(root.height - 40, editContent.implicitHeight + 86)
+            width: Math.min(root.width - 36, 700)
+            height: Math.min(root.height - 48, 720)
             anchors.centerIn: parent
-            radius: 28
-            color: "#FFFFFF"
+            radius: 16
+            color: panel
             border.color: line
             clip: true
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 22
+                anchors.margins: 20
                 spacing: 14
 
                 RowLayout {
@@ -907,18 +1361,26 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
-                        Text { text: (editMode === "create" ? "Create " : "Edit ") + editEntity; color: ink; font.pixelSize: 24; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Text { text: "Make changes carefully. Admin actions affect the whole system."; color: muted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: (editMode === "create" ? "Create " : "Edit ") + editEntity; color: ink; font.pixelSize: 23; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: "Changes here affect production data. Review the fields before saving."; color: muted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
                     }
-                    Rectangle { width: 36; height: 36; radius: 12; color: "#F1F5F9"; Text { anchors.centerIn: parent; text: "×"; color: muted; font.pixelSize: 22 } MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: editorVisible = false } }
+                    Rectangle {
+                        Layout.preferredWidth: 36
+                        Layout.preferredHeight: 36
+                        radius: 9
+                        color: panel2
+                        border.color: line
+                        Text { anchors.centerIn: parent; text: "X"; color: muted; font.pixelSize: 15; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: editorVisible = false }
+                    }
                 }
 
                 Flickable {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    contentWidth: width
-                    contentHeight: editContent.height
                     clip: true
+                    contentWidth: width
+                    contentHeight: editContent.implicitHeight
                     boundsBehavior: Flickable.StopAtBounds
 
                     ColumnLayout {
@@ -936,8 +1398,23 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
-                    Rectangle { Layout.fillWidth: true; height: 44; radius: 15; color: "#F8FAFC"; border.color: line; Text { anchors.centerIn: parent; text: "Cancel"; color: muted; font.pixelSize: 14; font.bold: true } MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: editorVisible = false } }
-                    Rectangle { Layout.fillWidth: true; height: 44; radius: 15; color: primary; Text { anchors.centerIn: parent; text: "Save changes"; color: "white"; font.pixelSize: 14; font.bold: true } MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: saveEditor() } }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 10
+                        color: panel2
+                        border.color: line
+                        Text { anchors.centerIn: parent; text: "Cancel"; color: muted; font.pixelSize: 14; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: editorVisible = false }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 10
+                        color: primary
+                        Text { anchors.centerIn: parent; text: "Save changes"; color: "white"; font.pixelSize: 14; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: saveEditor() }
+                    }
                 }
             }
         }
@@ -946,30 +1423,100 @@ Item {
     Component {
         id: fieldBox
         Rectangle {
+            id: fieldRoot
             property string label: ""
             property string value: ""
             property string keyName: ""
             property bool multiline: false
+
             Layout.fillWidth: true
-            height: multiline ? 112 : 66
-            radius: 16
-            color: "#F8FAFC"
+            height: multiline ? 122 : 66
+            radius: 10
+            color: panel2
             border.color: line
+
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 10
                 spacing: 4
-                Text { text: label; color: faint; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                TextInput {
+                Text { text: fieldRoot.label; color: faint; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+
+                Loader {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    text: value
+                    sourceComponent: fieldRoot.multiline ? textAreaField : textInputField
+                }
+            }
+
+            Component {
+                id: textInputField
+                TextField {
+                    text: fieldRoot.value
                     color: ink
+                    selectByMouse: true
                     font.pixelSize: 14
-                    clip: true
-                    wrapMode: multiline ? TextInput.WrapAnywhere : TextInput.NoWrap
-                    verticalAlignment: multiline ? TextInput.AlignTop : TextInput.AlignVCenter
-                    onTextChanged: setEditValue(keyName, text)
+                    background: Rectangle { color: "transparent" }
+                    onTextEdited: setEditValue(fieldRoot.keyName, text)
+                }
+            }
+
+            Component {
+                id: textAreaField
+                TextArea {
+                    text: fieldRoot.value
+                    color: ink
+                    selectByMouse: true
+                    wrapMode: TextArea.Wrap
+                    font.pixelSize: 14
+                    background: Rectangle { color: "transparent" }
+                    onTextChanged: setEditValue(fieldRoot.keyName, text)
+                }
+            }
+        }
+    }
+
+    Component {
+        id: choiceBox
+        Rectangle {
+            id: choiceRoot
+            property string label: ""
+            property string keyName: ""
+            property var options: []
+            property var value: ""
+
+            Layout.fillWidth: true
+            height: 68
+            radius: 10
+            color: panel2
+            border.color: line
+
+            function findIndex(v) {
+                for (var i = 0; i < options.length; i++) {
+                    if (asText(options[i].value) === asText(v))
+                        return i
+                }
+                return options.length > 0 ? 0 : -1
+            }
+
+            onOptionsChanged: combo.currentIndex = findIndex(value)
+            onValueChanged: combo.currentIndex = findIndex(value)
+            Component.onCompleted: combo.currentIndex = findIndex(value)
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 4
+                Text { text: choiceRoot.label; color: faint; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                ComboBox {
+                    id: combo
+                    Layout.fillWidth: true
+                    model: choiceRoot.options
+                    textRole: "label"
+                    font.pixelSize: 14
+                    onActivated: {
+                        if (index >= 0 && index < choiceRoot.options.length)
+                            setEditValue(choiceRoot.keyName, choiceRoot.options[index].value)
+                    }
                 }
             }
         }
@@ -978,23 +1525,27 @@ Item {
     Component {
         id: boolBox
         Rectangle {
+            id: boolRoot
             property string label: ""
             property string keyName: ""
-            property bool checked: false
+            property bool checkedValue: false
+
             Layout.fillWidth: true
-            height: 54
-            radius: 16
-            color: "#F8FAFC"
+            height: 58
+            radius: 10
+            color: panel2
             border.color: line
+
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 12
-                Text { text: label; color: ink; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                Rectangle { width: 52; height: 30; radius: 15; color: checked ? good : "#CBD5E1"
-                    Rectangle { width: 24; height: 24; radius: 12; color: "white"; anchors.verticalCenter: parent.verticalCenter; x: checked ? 25 : 3 }
+                spacing: 10
+                Text { text: boolRoot.label; color: ink; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                Switch {
+                    checked: boolRoot.checkedValue
+                    onToggled: setEditValue(boolRoot.keyName, checked)
                 }
             }
-            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { checked = !checked; setEditValue(keyName, checked) } }
         }
     }
 
@@ -1015,10 +1566,10 @@ Item {
             spacing: 10
             Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Full name"; item.keyName = "name"; item.value = asText(editRow.name) } }
             Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Email"; item.keyName = "email"; item.value = asText(editRow.email) } }
-            Loader { Layout.fillWidth: true; sourceComponent: fieldBox; visible: editMode === "create"; onLoaded: { item.label = "Initial password"; item.keyName = "password"; item.value = asText(editRow.password) } }
-            Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Role: ADMIN / MANAGER / TEACHER / STUDENT"; item.keyName = "role"; item.value = asText(editRow.role) } }
-            Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Status: ACTIVE / PENDING / BLOCKED"; item.keyName = "status"; item.value = asText(editRow.status) } }
-            Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "School ID"; item.keyName = "school_id"; item.value = asText(editRow.school_id) } }
+            Loader { Layout.fillWidth: true; visible: editMode === "create"; sourceComponent: fieldBox; onLoaded: { item.label = "Initial password"; item.keyName = "password"; item.value = asText(editRow.password) } }
+            Loader { Layout.fillWidth: true; sourceComponent: choiceBox; onLoaded: { item.label = "Role"; item.keyName = "role"; item.options = roleOptions(); item.value = asText(editRow.role) } }
+            Loader { Layout.fillWidth: true; sourceComponent: choiceBox; onLoaded: { item.label = "Status"; item.keyName = "status"; item.options = statusOptions(); item.value = asText(editRow.status) } }
+            Loader { Layout.fillWidth: true; sourceComponent: choiceBox; onLoaded: { item.label = "School"; item.keyName = "school_id"; item.options = schoolOptions(); item.value = Number(editRow.school_id || 1) } }
         }
     }
 
@@ -1028,8 +1579,8 @@ Item {
             spacing: 10
             Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Course name"; item.keyName = "name"; item.value = asText(editRow.name) } }
             Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Description"; item.keyName = "description"; item.value = asText(editRow.description); item.multiline = true } }
-            Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Teacher ID"; item.keyName = "teacher_id"; item.value = asText(editRow.teacher_id) } }
-            Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "School ID"; item.keyName = "school_id"; item.value = asText(editRow.school_id) } }
+            Loader { Layout.fillWidth: true; sourceComponent: choiceBox; onLoaded: { item.label = "Teacher"; item.keyName = "teacher_id"; item.options = teacherOptions(); item.value = Number(editRow.teacher_id || userId) } }
+            Loader { Layout.fillWidth: true; sourceComponent: choiceBox; onLoaded: { item.label = "School"; item.keyName = "school_id"; item.options = schoolOptions(); item.value = Number(editRow.school_id || 1) } }
         }
     }
 
@@ -1037,40 +1588,124 @@ Item {
         id: assignmentEditor
         ColumnLayout {
             spacing: 10
+            Loader { Layout.fillWidth: true; visible: editMode === "create"; sourceComponent: choiceBox; onLoaded: { item.label = "Course"; item.keyName = "course_id"; item.options = courseOptions(); item.value = Number(editRow.course_id || 1) } }
             Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Title"; item.keyName = "title"; item.value = asText(editRow.title) } }
             Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Description"; item.keyName = "description"; item.value = asText(editRow.description); item.multiline = true } }
             Loader { Layout.fillWidth: true; sourceComponent: fieldBox; onLoaded: { item.label = "Due date"; item.keyName = "due_date"; item.value = asText(editRow.due_date) } }
-            Loader { Layout.fillWidth: true; sourceComponent: boolBox; onLoaded: { item.label = "AI enabled"; item.keyName = "ai_enabled"; item.checked = Boolean(editRow.ai_enabled) } }
-            Loader { Layout.fillWidth: true; sourceComponent: boolBox; onLoaded: { item.label = "Closed"; item.keyName = "is_closed"; item.checked = Boolean(editRow.is_closed) } }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 68
+                visible: editMode === "create"
+                radius: 10
+                color: panel2
+                border.color: line
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 10
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 3
+                        Text { text: "Rubric attachment"; color: faint; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: safe(editRow.attachment_name || fileNameFromPath(editRow.attachment_path)); color: ink; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                    }
+                    Rectangle {
+                        Layout.preferredWidth: 112
+                        Layout.preferredHeight: 36
+                        radius: 9
+                        color: primarySoft
+                        border.color: "#BFDBFE"
+                        Text { anchors.centerIn: parent; text: "Choose file"; color: primary; font.pixelSize: 12; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: openFilePicker("assignment_rubric") }
+                    }
+                    Rectangle {
+                        Layout.preferredWidth: 64
+                        Layout.preferredHeight: 36
+                        visible: safe(editRow.attachment_path) !== "-"
+                        radius: 9
+                        color: "#FFFFFF"
+                        border.color: line
+                        Text { anchors.centerIn: parent; text: "Clear"; color: muted; font.pixelSize: 12; font.bold: true }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                setEditValue("attachment_path", "")
+                                setEditValue("attachment_name", "")
+                            }
+                        }
+                    }
+                }
+            }
+            Loader { Layout.fillWidth: true; sourceComponent: boolBox; onLoaded: { item.label = "AI enabled"; item.keyName = "ai_enabled"; item.checkedValue = Boolean(editRow.ai_enabled) } }
+            Loader { Layout.fillWidth: true; sourceComponent: boolBox; onLoaded: { item.label = "Closed"; item.keyName = "is_closed"; item.checkedValue = Boolean(editRow.is_closed) } }
         }
     }
 
     Rectangle {
         visible: confirmVisible
         anchors.fill: parent
-        color: "#990F172A"
+        color: "#99111827"
         z: 80
+
         MouseArea { anchors.fill: parent }
+
         Rectangle {
-            width: Math.min(root.width - 32, 430)
-            height: 246
-            radius: 26
-            color: "white"
+            width: Math.min(root.width - 32, 440)
+            height: 250
+            radius: 16
+            color: panel
             border.color: line
             anchors.centerIn: parent
+
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 22
+                anchors.margins: 20
                 spacing: 12
-                Text { text: "Delete record?"; color: ink; font.pixelSize: 24; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                Text { text: "This action may remove related data. Make sure this is really what you want to do."; color: muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Rectangle { Layout.fillWidth: true; height: 54; radius: 16; color: badSoft; border.color: "#FECACA"; Text { anchors.centerIn: parent; text: pendingDeleteEntity.toUpperCase() + " · " + (pendingDeleteRow ? titleOf(pendingDeleteRow) : ""); color: bad; font.pixelSize: 13; font.bold: true; width: parent.width - 24; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter } }
+
+                Text { text: "Delete record?"; color: ink; font.pixelSize: 23; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { text: "This can remove related data and cannot be undone from this screen."; color: muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 54
+                    radius: 10
+                    color: redSoft
+                    border.color: "#FECACA"
+                    Text {
+                        anchors.centerIn: parent
+                        width: parent.width - 24
+                        text: pendingDeleteEntity.toUpperCase() + " / " + (pendingDeleteRow ? primaryOf(pendingDeleteRow) : "")
+                        color: red
+                        font.pixelSize: 13
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                    }
+                }
+
                 Item { Layout.fillHeight: true }
+
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
-                    Rectangle { Layout.fillWidth: true; height: 44; radius: 15; color: "#F8FAFC"; border.color: line; Text { anchors.centerIn: parent; text: "Cancel"; color: muted; font.pixelSize: 14; font.bold: true } MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: confirmVisible = false } }
-                    Rectangle { Layout.fillWidth: true; height: 44; radius: 15; color: bad; Text { anchors.centerIn: parent; text: "Delete"; color: "white"; font.pixelSize: 14; font.bold: true } MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: performDelete() } }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 10
+                        color: panel2
+                        border.color: line
+                        Text { anchors.centerIn: parent; text: "Cancel"; color: muted; font.pixelSize: 14; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: confirmVisible = false }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        radius: 10
+                        color: red
+                        Text { anchors.centerIn: parent; text: "Delete"; color: "white"; font.pixelSize: 14; font.bold: true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: performDelete() }
+                    }
                 }
             }
         }

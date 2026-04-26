@@ -36,8 +36,13 @@ def prettify_message(message: str) -> str:
         'SCHOOL_ID_REQUIRED': 'Please enter your school ID before continuing.',
         'INVALID_SCHOOL_ID': 'Please enter a valid school ID.',
         'SCHOOL_NOT_FOUND': 'We could not find a school with that ID.',
+        'SCHOOL_CREATED': 'The school was created successfully.',
         'SCHOOL_UPDATED': 'School details were updated successfully.',
+        'SCHOOL_DELETED': 'The school was deleted successfully.',
         'NO_FIELDS_TO_UPDATE': 'There is nothing to update.',
+        'INVALID_ROLE': 'Please choose a valid role.',
+        'INVALID_STATUS': 'Please choose a valid status.',
+        'TEACHER_NOT_FOUND': 'Please choose a valid teacher.',
         'COURSE_NOT_FOUND': 'The class could not be found.',
         'COURSE_DELETED': 'The class was deleted successfully.',
         'CLASS_NOT_FOUND': 'The class code was not found.',
@@ -112,6 +117,7 @@ class AuthClient:
     def __init__(self, host="127.0.0.1", port=5555):
         self.host = host
         self.port = port
+        self.timeout_seconds = 30
 
         self.sock = None
         self.aes_key = None
@@ -122,6 +128,7 @@ class AuthClient:
             return
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout_seconds)
         sock.connect((self.host, self.port))
         aes_key = DH_client(sock)
 
@@ -410,7 +417,7 @@ class Auth(QObject):
     markMessageReadResult = Signal(bool, str, int, int)
     markAllMessagesReadResult = Signal(bool, str, int)
     markGradeReadResult = Signal(bool, str, int, int)
-    adminOverviewResult = Signal(bool, str, list, list, list, list)
+    adminOverviewResult = Signal(bool, str, dict)
     adminActionResult = Signal(bool, str, str)
 
     def __init__(self, host="127.0.0.1", port=5555):
@@ -943,11 +950,29 @@ class Auth(QObject):
         try:
             resp = self._client.send_request({"type": "GET_ADMIN_OVERVIEW_REQUEST"})
             if resp.get("status") == "OK":
-                self.adminOverviewResult.emit(True, "OK", resp.get("schools", []), resp.get("users", []), resp.get("courses", []), resp.get("assignments", []))
+                payload = {
+                    "schools": resp.get("schools", []),
+                    "users": resp.get("users", []),
+                    "courses": resp.get("courses", []),
+                    "members": resp.get("members", []),
+                    "assignments": resp.get("assignments", []),
+                    "submissions": resp.get("submissions", []),
+                    "ai_results": resp.get("ai_results", []),
+                    "grades": resp.get("grades", []),
+                    "feedback": resp.get("feedback", []),
+                    "materials": resp.get("materials", []),
+                    "messages": resp.get("messages", []),
+                    "message_reads": resp.get("message_reads", []),
+                    "grade_reads": resp.get("grade_reads", []),
+                    "activity": resp.get("activity", []),
+                    "system": resp.get("system", []),
+                    "stats": resp.get("stats", {})
+                }
+                self.adminOverviewResult.emit(True, "OK", payload)
             else:
-                self.adminOverviewResult.emit(False, prettify_message(resp.get("message", "ERROR")), [], [], [], [])
+                self.adminOverviewResult.emit(False, prettify_message(resp.get("message", "ERROR")), {})
         except Exception as e:
-            self.adminOverviewResult.emit(False, f"NETWORK_ERROR: {e}", [], [], [], [])
+            self.adminOverviewResult.emit(False, f"NETWORK_ERROR: {e}", {})
 
     @Slot(str, str, str, str)
     def admin_create_school(self, name, address, contact_name, contact_email):
