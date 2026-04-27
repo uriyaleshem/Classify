@@ -5,6 +5,8 @@ import hashlib
 import threading
 import os
 import base64
+import urllib.request
+from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import QObject, Signal, Slot, QUrl
 from PySide6.QtGui import QGuiApplication
@@ -12,6 +14,84 @@ from PySide6.QtQml import QQmlApplicationEngine
 from tcp_by_size import send_with_size, recv_by_size
 from DH import DH_client
 from AES_e import encrypt_message, decrypt_message
+import resources_rc
+
+
+APP_DIR = Path(__file__).resolve().parent
+DEFAULT_CLASSIFY_HOST = "127.0.0.1"
+DEFAULT_CLASSIFY_PORT = 5555
+DEFAULT_DISCOVERY_TIMEOUT_SECONDS = 3
+
+
+def client_config_path() -> Path:
+    return Path(os.getenv("CLASSIFY_CLIENT_CONFIG", str(APP_DIR / "client_config.json")))
+
+
+def load_client_config() -> dict:
+    path = client_config_path()
+    if not path.exists() or not path.is_file():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        print(f"[DISCOVERY] Could not read {path}: {exc}")
+        return {}
+
+
+def safe_port(value, default_port=DEFAULT_CLASSIFY_PORT) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return int(default_port)
+    return port if 1 <= port <= 65535 else int(default_port)
+
+
+def server_address_from_payload(payload: dict, default_host: str, default_port: int):
+    if not isinstance(payload, dict):
+        return default_host, default_port
+
+    source = payload
+    for key in ("classify_server", "server"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            source = nested
+            break
+
+    host = (
+        source.get("host")
+        or source.get("ip")
+        or source.get("domain")
+        or source.get("server_host")
+        or default_host
+    )
+    port = source.get("port", source.get("server_port", default_port))
+    return str(host).strip() or default_host, safe_port(port, default_port)
+
+
+def fetch_discovery_server_address(discovery_url: str, timeout_seconds: int, default_host: str, default_port: int):
+    request = urllib.request.Request(discovery_url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        raw = response.read(64 * 1024)
+    payload = json.loads(raw.decode("utf-8"))
+    return server_address_from_payload(payload, default_host, default_port)
+
+
+def resolve_configured_server_address(default_host=DEFAULT_CLASSIFY_HOST, default_port=DEFAULT_CLASSIFY_PORT):
+    config = load_client_config()
+    fallback_host = str(config.get("fallback_host") or config.get("host") or default_host).strip() or default_host
+    fallback_port = safe_port(config.get("fallback_port", config.get("port", default_port)), default_port)
+    discovery_url = str(config.get("discovery_url", "")).strip()
+    timeout_seconds = safe_port(config.get("discovery_timeout_seconds", DEFAULT_DISCOVERY_TIMEOUT_SECONDS), DEFAULT_DISCOVERY_TIMEOUT_SECONDS)
+
+    if discovery_url:
+        try:
+            return fetch_discovery_server_address(discovery_url, timeout_seconds, fallback_host, fallback_port)
+        except Exception as exc:
+            print(f"[DISCOVERY] Discovery failed ({discovery_url}): {exc}. Using fallback {fallback_host}:{fallback_port}")
+
+    return fallback_host, fallback_port
 
 
 
@@ -114,9 +194,10 @@ def prettify_message(message: str) -> str:
 # TCP Auth Client (persistent connection)
 # -----------------------------
 class AuthClient:
-    def __init__(self, host="127.0.0.1", port=5555):
-        self.host = host
-        self.port = port
+    def __init__(self, host=DEFAULT_CLASSIFY_HOST, port=DEFAULT_CLASSIFY_PORT):
+        self.fallback_host = host or DEFAULT_CLASSIFY_HOST
+        self.fallback_port = safe_port(port, DEFAULT_CLASSIFY_PORT)
+        self.host, self.port = resolve_configured_server_address(self.fallback_host, self.fallback_port)
         self.timeout_seconds = 30
 
         self.sock = None
@@ -124,10 +205,18 @@ class AuthClient:
         self.current_user = {}
         self._lock = threading.Lock()
 
+    def refresh_server_address(self):
+        host, port = resolve_configured_server_address(self.fallback_host, self.fallback_port)
+        if host != self.host or port != self.port:
+            print(f"[DISCOVERY] Classify server changed to {host}:{port}")
+        self.host = host
+        self.port = port
+
     def connect(self):
         if self.sock is not None and self.aes_key is not None:
             return
 
+        self.refresh_server_address()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             sock.settimeout(self.timeout_seconds)
@@ -1138,13 +1227,12 @@ class Auth(QObject):
 
 def main():
     app = QGuiApplication(sys.argv)
-    app.setWindowIcon(QIcon("data/screens/png/AppIcon.png"))
+    app.setWindowIcon(QIcon(":/data/screens/png/AppIcon.png"))
     engine = QQmlApplicationEngine()
 
     auth = Auth(host="127.0.0.1", port=5555)
     engine.rootContext().setContextProperty("auth", auth)
-    qml_path = os.path.join(os.path.dirname(__file__), "main.qml")
-    engine.load(QUrl.fromLocalFile(qml_path))
+    engine.load(QUrl("qrc:/main.qml"))
 
     if not engine.rootObjects():
         print("Failed to load QML (no root objects)")

@@ -1,0 +1,6 @@
+{
+  "discovery_url": "http://127.0.0.1:8000/server.json",
+  "fallback_host": "127.0.0.1",
+  "fallback_port": 5555,
+  "discovery_timeout_seconds": 3
+}

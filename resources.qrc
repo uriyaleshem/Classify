@@ -1,0 +1,19 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="main.qml">main.qml</file>
+    <file alias="data/screens/AdminHome.qml">data/screens/AdminHome.qml</file>
+    <file alias="data/screens/Login.qml">data/screens/Login.qml</file>
+    <file alias="data/screens/ManagerHome.qml">data/screens/ManagerHome.qml</file>
+    <file alias="data/screens/Signup.qml">data/screens/Signup.qml</file>
+    <file alias="data/screens/StudentHome.qml">data/screens/StudentHome.qml</file>
+    <file alias="data/screens/TeacherHome.qml">data/screens/TeacherHome.qml</file>
+    <file alias="data/screens/png/AppIcon.ico">data/screens/png/AppIcon.ico</file>
+    <file alias="data/screens/png/AppIcon.png">data/screens/png/AppIcon.png</file>
+    <file alias="data/screens/png/AppLogo.png">data/screens/png/AppLogo.png</file>
+    <file alias="data/screens/png/OpenScreen.png">data/screens/png/OpenScreen.png</file>
+    <file alias="data/screens/png/app_icon.png">data/screens/png/app_icon.png</file>
+    <file alias="data/screens/png/app_icon_v2.png">data/screens/png/app_icon_v2.png</file>
+    <file alias="data/screens/png/logo10.png">data/screens/png/logo10.png</file>
+    <file alias="data/screens/png/noback.png">data/screens/png/noback.png</file>
+  </qresource>
+</RCC>
