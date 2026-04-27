@@ -1687,6 +1687,7 @@ Item {
                 readOnly: true
                 wrapMode: TextEdit.WrapAnywhere
                 text: root.selectedMaterialDescription
+                color: ink
                 background: Rectangle { radius: 14; color: "#F8FAFC"; border.width: 1; border.color: line }
             }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } ActionButton { text: "Close"; onClicked: messageDialog.close() } }
@@ -1750,6 +1751,9 @@ Item {
                 readOnly: true
                 wrapMode: TextEdit.WrapAnywhere
                 selectByMouse: true
+                color: ink
+                selectedTextColor: "#FFFFFF"
+                selectionColor: indigo600
                 background: Rectangle {
                     radius: 14
                     color: "#F8FAFC"
@@ -1809,6 +1813,9 @@ Item {
                 readOnly: true
                 wrapMode: TextEdit.WrapAnywhere
                 selectByMouse: true
+                color: ink
+                selectedTextColor: "#FFFFFF"
+                selectionColor: indigo600
                 background: Rectangle {
                     radius: 14
                     color: "#F8FAFC"

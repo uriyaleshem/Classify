@@ -1237,13 +1237,18 @@ class Auth(QObject):
 
 
 def main():
+    os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
+
     app = QGuiApplication(sys.argv)
     app.setWindowIcon(QIcon(":/data/screens/png/AppIcon.png"))
     engine = QQmlApplicationEngine()
 
-    auth = Auth(host="127.0.0.1", port=5555)
+    auth = Auth()
     engine.rootContext().setContextProperty("auth", auth)
-    engine.load(QUrl("qrc:/main.qml"))
+    if getattr(sys, "frozen", False):
+        engine.load(QUrl("qrc:/main.qml"))
+    else:
+        engine.load(QUrl.fromLocalFile(str(APP_DIR / "main.qml")))
 
     if not engine.rootObjects():
         print("Failed to load QML (no root objects)")

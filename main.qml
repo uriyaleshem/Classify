@@ -11,6 +11,16 @@ ApplicationWindow {
     title: "Classify"
     color: "#F6F7FB"
     font.family: "Segoe UI"
+    palette.window: "#F6F7FB"
+    palette.windowText: "#0F172A"
+    palette.base: "#FFFFFF"
+    palette.alternateBase: "#F8FAFC"
+    palette.text: "#0F172A"
+    palette.button: "#FFFFFF"
+    palette.buttonText: "#0F172A"
+    palette.placeholderText: "#64748B"
+    palette.highlight: "#4F46E5"
+    palette.highlightedText: "#FFFFFF"
 
     StackView {
         id: stack

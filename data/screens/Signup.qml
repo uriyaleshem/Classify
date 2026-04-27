@@ -366,6 +366,10 @@ Item {
                                         font.pixelSize: 13
                                         leftPadding: 14; rightPadding: 14
                                         topPadding: 12; bottomPadding: 12
+                                        color: "#0F172A"
+                                        placeholderTextColor: "#64748B"
+                                        selectedTextColor: "#FFFFFF"
+                                        selectionColor: "#4F46E5"
                                         background: null
                                         onTextChanged: nameBox.invalid = false
                                     }
@@ -407,6 +411,10 @@ Item {
                                         font.pixelSize: 13
                                         leftPadding: 14; rightPadding: 14
                                         topPadding: 12; bottomPadding: 12
+                                        color: "#0F172A"
+                                        placeholderTextColor: "#64748B"
+                                        selectedTextColor: "#FFFFFF"
+                                        selectionColor: "#4F46E5"
                                         background: null
                                         onTextChanged: emailBox.invalid = false
                                     }
@@ -450,6 +458,10 @@ Item {
                                         font.pixelSize: 13
                                         leftPadding: 14; rightPadding: 14
                                         topPadding: 12; bottomPadding: 12
+                                        color: "#0F172A"
+                                        placeholderTextColor: "#64748B"
+                                        selectedTextColor: "#FFFFFF"
+                                        selectionColor: "#4F46E5"
                                         background: null
                                         onTextChanged: passBox.invalid = false
                                     }
@@ -493,6 +505,10 @@ Item {
                                         font.pixelSize: 13
                                         leftPadding: 14; rightPadding: 14
                                         topPadding: 12; bottomPadding: 12
+                                        color: "#0F172A"
+                                        placeholderTextColor: "#64748B"
+                                        selectedTextColor: "#FFFFFF"
+                                        selectionColor: "#4F46E5"
                                         background: null
                                         onTextChanged: confirmBox.invalid = false
                                     }
@@ -633,6 +649,8 @@ Item {
 
                                         color: "#0F172A"
                                         placeholderTextColor: "#64748B"
+                                        selectedTextColor: "#FFFFFF"
+                                        selectionColor: "#4F46E5"
                                         onTextChanged: schoolIdContainer.invalid = false
 
                                         onEnabledChanged: {

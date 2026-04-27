@@ -429,6 +429,10 @@ Item {
                                         font.pixelSize: 13
                                         leftPadding: 14; rightPadding: 14
                                         topPadding: 12; bottomPadding: 12
+                                        color: "#0F172A"
+                                        placeholderTextColor: "#64748B"
+                                        selectedTextColor: "#FFFFFF"
+                                        selectionColor: "#4F46E5"
                                         background: null
                                         onTextChanged: emailBox.invalid = false
                                         Keys.onReturnPressed: login.triggerLogin()
@@ -473,25 +477,90 @@ Item {
                                         font.pixelSize: 13
                                         leftPadding: 14; rightPadding: 14
                                         topPadding: 12; bottomPadding: 12
+                                        color: "#0F172A"
+                                        placeholderTextColor: "#64748B"
+                                        selectedTextColor: "#FFFFFF"
+                                        selectionColor: "#4F46E5"
                                         background: null
                                         onTextChanged: passBox.invalid = false
                                         Keys.onReturnPressed: login.triggerLogin()
                                         Keys.onEnterPressed: login.triggerLogin()
 
-                                        echoMode: showpass ? TextInput.Normal : TextInput.Password
+                                        echoMode: login.showpass ? TextInput.Normal : TextInput.Password
                                     }
 
                                 }
 
 
-                                CheckBox {
-                                    text: "show password"
-                                    font.pixelSize: 12
-                                    x: 120
-                                    y:1
-                                    onCheckedChanged: {
-                                        showpass = checked
+                                Item {
+                                    id: showPasswordControl
+                                    Layout.fillWidth: true
+                                    implicitHeight: 20
+                                    activeFocusOnTab: true
+
+                                    property bool hovered: false
+
+                                    Row {
+                                        id: showPasswordRow
+                                        spacing: 8
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 2
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Rectangle {
+                                            width: 16
+                                            height: 16
+                                            radius: 5
+                                            color: login.showpass ? "#4F46E5" : "#FFFFFF"
+                                            border.width: 1
+                                            border.color: login.showpass ? "#4F46E5"
+                                                        : showPasswordControl.hovered ? "#A5B4FC"
+                                                        : "#CBD5E1"
+
+                                            Behavior on color { ColorAnimation { duration: 140 } }
+                                            Behavior on border.color { ColorAnimation { duration: 140 } }
+
+                                            Canvas {
+                                                id: showPasswordCheck
+                                                anchors.fill: parent
+                                                visible: login.showpass
+                                                onVisibleChanged: if (visible) requestPaint()
+                                                onPaint: {
+                                                    var ctx = getContext("2d")
+                                                    ctx.reset()
+                                                    ctx.lineWidth = 2
+                                                    ctx.lineCap = "round"
+                                                    ctx.lineJoin = "round"
+                                                    ctx.strokeStyle = "#FFFFFF"
+                                                    ctx.beginPath()
+                                                    ctx.moveTo(width * 0.28, height * 0.53)
+                                                    ctx.lineTo(width * 0.44, height * 0.68)
+                                                    ctx.lineTo(width * 0.74, height * 0.34)
+                                                    ctx.stroke()
+                                                }
+                                            }
                                         }
+
+                                        Text {
+                                            text: "Show Password"
+                                            color: "#475569"
+                                            font.pixelSize: 12
+                                            verticalAlignment: Text.AlignVCenter
+                                            height: 16
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onEntered: showPasswordControl.hovered = true
+                                        onExited: showPasswordControl.hovered = false
+                                        onClicked: login.showpass = !login.showpass
+                                    }
+
+                                    Keys.onSpacePressed: login.showpass = !login.showpass
+                                    Keys.onReturnPressed: login.showpass = !login.showpass
                                 }
 
 
@@ -669,14 +738,6 @@ Item {
 
                                     }
                                 }
-
-                                Row {
-                                    Layout.alignment: Qt.AlignHCenter
-                                    spacing: 18
-                                    Text { text: "Terms"; color: "#94A3B8"; font.pixelSize: 11 }
-                                    Text { text: "Privacy"; color: "#94A3B8"; font.pixelSize: 11 }
-                                    Text { text: "Help"; color: "#94A3B8"; font.pixelSize: 11 }
-                                }
                             }
                         }
                     }
@@ -687,7 +748,7 @@ Item {
                         width: 60
                         height: 60
                         x: 493
-                        y: 25
+                        y: 37
                         fillMode: Image.PreserveAspectFit
                     }
                 }
