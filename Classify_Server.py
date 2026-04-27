@@ -4,7 +4,10 @@ import json
 import os
 import re
 import base64
+import hashlib
+import hmac
 import shutil
+import secrets
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -22,7 +25,7 @@ MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
 LOG_FILE = Path(__file__).resolve().parent / "server_data/server_log.txt"
 
 PUBLIC_PATH_PREFIX = "storage://"
-SOCKET_TIMEOUT_SECONDS = 30
+HANDSHAKE_TIMEOUT_SECONDS = 30
 
 LOG_REDACTED_VALUE = "<redacted>"
 LOG_BINARY_VALUE = "<binary content omitted>"
@@ -34,8 +37,31 @@ LOG_SUMMARY_KEYS = {
 }
 LOG_SENSITIVE_KEYS = {
     "password", "password_hash", "token", "secret", "api_key", "authorization",
-    "file_content_b64", "attachment_content_b64", "content_b64"
+    "_auth_token", "file_content_b64", "attachment_content_b64", "content_b64"
 }
+
+AUTH_TOKEN_SECRET = secrets.token_bytes(32)
+
+
+def auth_token_signature(payload: str) -> str:
+    digest = hmac.new(AUTH_TOKEN_SECRET, payload.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def create_auth_token(user_id: int) -> str:
+    payload = str(int(user_id))
+    return f"{payload}.{auth_token_signature(payload)}"
+
+
+def verify_auth_token(token: str, user_id: int) -> bool:
+    token_text = str(token or "")
+    if "." not in token_text:
+        return False
+    payload, signature = token_text.rsplit(".", 1)
+    if payload != str(int(user_id)):
+        return False
+    expected = auth_token_signature(payload)
+    return hmac.compare_digest(signature, expected)
 
 
 def resolve_storage_path(file_ref: str) -> Optional[Path]:
@@ -247,52 +273,82 @@ def delete_stored_tree(path_value: str):
 # -----------------------------
 
 UNAUTHENTICATED_REQUESTS = {"LOGIN_REQUEST", "SIGNUP_REQUEST"}
+ADMIN_ONLY_REQUESTS = {
+    "GET_ADMIN_OVERVIEW_REQUEST",
+    "ADMIN_CREATE_SCHOOL_REQUEST",
+    "ADMIN_UPDATE_SCHOOL_REQUEST",
+    "ADMIN_DELETE_SCHOOL_REQUEST",
+    "ADMIN_CREATE_USER_REQUEST",
+    "ADMIN_UPDATE_USER_REQUEST",
+    "ADMIN_DELETE_USER_REQUEST",
+    "ADMIN_UPDATE_COURSE_REQUEST",
+    "ADMIN_UPDATE_ASSIGNMENT_REQUEST",
+}
 
 
-def session_matches_user(session: dict, user_id: int) -> bool:
-    return bool(session) and int(session.get("user_id", -1)) == int(user_id)
+def build_auth_context_from_request(req: dict) -> dict:
+    try:
+        user_id = int(req.get("_auth_user_id", -1))
+    except (TypeError, ValueError):
+        return {}
 
+    if user_id < 0:
+        return {}
 
-def build_session_from_login_response(resp: dict) -> dict:
+    if not verify_auth_token(req.get("_auth_token", ""), user_id):
+        return {}
+
+    ok_user, user_ctx = db.get_user_context(user_id)
+    if not ok_user:
+        return {}
+
+    status = str(user_ctx.get("status", "")).upper()
+    if status != "ACTIVE":
+        return {}
+
     return {
-        "user_id": int(resp.get("user_id", -1)),
-        "role": str(resp.get("role", "")).upper(),
-        "school_id": int(resp.get("school_id", -1)),
-        "name": resp.get("name", ""),
+        "user_id": int(user_ctx.get("user_id", user_id)),
+        "role": str(user_ctx.get("role", "")).upper(),
+        "school_id": int(user_ctx.get("school_id", -1)),
+        "name": user_ctx.get("name", ""),
     }
 
 
-def authorize_request(req: dict, session: dict):
+def authorize_request(req: dict):
     req_type = req.get("type", "")
     if req_type in UNAUTHENTICATED_REQUESTS:
-        return True, None
+        return True, None, {}
 
-    if not session or int(session.get("user_id", -1)) < 0:
-        return False, err("AUTH_REQUIRED")
+    auth_context = build_auth_context_from_request(req)
+    if not auth_context or int(auth_context.get("user_id", -1)) < 0:
+        return False, err("AUTH_REQUIRED"), {}
 
-    role = str(session.get("role", "")).upper()
-    user_id = int(session.get("user_id", -1))
-    school_id = int(session.get("school_id", -1))
+    role = str(auth_context.get("role", "")).upper()
+    user_id = int(auth_context.get("user_id", -1))
+    school_id = int(auth_context.get("school_id", -1))
 
     if role == "ADMIN":
-        return True, None
+        return True, None, auth_context
 
     def deny(msg="FORBIDDEN"):
-        return False, err(msg)
+        return False, err(msg), auth_context
+
+    if req_type in ADMIN_ONLY_REQUESTS:
+        return deny()
 
     if req_type == "GET_TEACHER_COURSES_REQUEST":
-        return (True, None) if role in {"TEACHER", "ADMIN"} and int(req.get("teacher_id", -999)) == user_id else deny()
+        return (True, None, auth_context) if role in {"TEACHER", "ADMIN"} and int(req.get("teacher_id", -999)) == user_id else deny()
 
     if req_type in {"GET_STUDENT_DASHBOARD_REQUEST", "JOIN_COURSE_BY_CODE_REQUEST", "LEAVE_COURSE_REQUEST", "DELETE_STUDENT_SUBMISSION_REQUEST", "MARK_MESSAGE_READ_REQUEST", "MARK_ALL_MESSAGES_READ_REQUEST", "MARK_GRADE_READ_REQUEST"}:
         if role not in {"STUDENT", "ADMIN"}:
             return deny()
         target_id = int(req.get("student_id", user_id))
-        return (True, None) if role == "ADMIN" or target_id == user_id else deny()
+        return (True, None, auth_context) if role == "ADMIN" or target_id == user_id else deny()
 
     if req_type == "UPLOAD_SUBMISSION_REQUEST":
         if role not in {"STUDENT", "ADMIN"}:
             return deny()
-        return (True, None) if role == "ADMIN" or int(req.get("student_id", -1)) == user_id else deny()
+        return (True, None, auth_context) if role == "ADMIN" or int(req.get("student_id", -1)) == user_id else deny()
 
     if req_type in {"APPROVE_USER_REQUEST", "BLOCK_USER_REQUEST", "UNBLOCK_USER_REQUEST", "GET_USERS_REQUEST", "GET_SCHOOL_COURSES_REQUEST", "GET_SCHOOL_ASSIGNMENTS_REQUEST", "UPDATE_SCHOOL_REQUEST"}:
         if role not in {"MANAGER", "ADMIN"}:
@@ -303,23 +359,23 @@ def authorize_request(req: dict, session: dict):
         if req_type in {"APPROVE_USER_REQUEST", "BLOCK_USER_REQUEST", "UNBLOCK_USER_REQUEST"}:
             ok_user, user_ctx = db.get_user_context(int(req.get("user_id", -1)))
             if not ok_user:
-                return False, err(user_ctx)
+                return False, err(user_ctx), auth_context
             if role != "ADMIN" and int(user_ctx.get("school_id", -1)) != school_id:
                 return deny()
-        return True, None
+        return True, None, auth_context
 
     if req_type in {"CREATE_COURSE_REQUEST"}:
         if role not in {"TEACHER", "ADMIN"}:
             return deny()
         if role != "ADMIN" and (int(req.get("teacher_id", -1)) != user_id or int(req.get("school_id", -1)) != school_id):
             return deny()
-        return True, None
+        return True, None, auth_context
 
     if req_type in {"GET_COURSE_ASSIGNMENTS_REQUEST", "GET_COURSE_STUDENTS_REQUEST", "GET_COURSE_MATERIALS_REQUEST", "GET_COURSE_MESSAGES_REQUEST"}:
         course_id = int(req.get("course_id", -1))
         if course_id < 0:
             return deny("MISSING_COURSE_ID")
-        return (True, None) if db.can_user_access_course(user_id, role, school_id, course_id) else deny()
+        return (True, None, auth_context) if db.can_user_access_course(user_id, role, school_id, course_id) else deny()
 
     if req_type in {"DELETE_COURSE_REQUEST", "CREATE_ASSIGNMENT_REQUEST", "CREATE_MATERIAL_REQUEST", "SAVE_COURSE_MESSAGE_REQUEST", "UPDATE_COURSE_MEMBER_STATUS_REQUEST", "DELETE_COURSE_MEMBER_REQUEST"}:
         if role not in {"TEACHER", "ADMIN"}:
@@ -333,44 +389,44 @@ def authorize_request(req: dict, session: dict):
             return deny()
         if req_type == "SAVE_COURSE_MESSAGE_REQUEST" and role == "TEACHER" and int(req.get("sender_id", user_id) or user_id) != user_id:
             return deny()
-        return True, None
+        return True, None, auth_context
 
     if req_type in {"SET_ASSIGNMENT_CLOSED_REQUEST", "DELETE_ASSIGNMENT_REQUEST", "GET_SUBMISSIONS_FOR_ASSIGNMENT_REQUEST"}:
         ok_course, course_id = db.get_assignment_course_id(int(req.get("assignment_id", -1)))
         if not ok_course:
-            return False, err(course_id)
-        return (True, None) if db.can_user_access_course(user_id, role, school_id, course_id) and role in {"TEACHER", "ADMIN"} else deny()
+            return False, err(course_id), auth_context
+        return (True, None, auth_context) if db.can_user_access_course(user_id, role, school_id, course_id) and role in {"TEACHER", "ADMIN"} else deny()
 
     if req_type == "UPDATE_SUBMISSION_REVIEW_REQUEST":
         ok_course, course_id = db.get_submission_course_id(int(req.get("submission_id", -1)))
         if not ok_course:
-            return False, err(course_id)
+            return False, err(course_id), auth_context
         if role == "ADMIN":
-            return True, None
+            return True, None, auth_context
         if role != "TEACHER" or int(req.get("updated_by", -1)) != user_id:
             return deny()
-        return (True, None) if db.can_user_access_course(user_id, role, school_id, course_id) else deny()
+        return (True, None, auth_context) if db.can_user_access_course(user_id, role, school_id, course_id) else deny()
 
     if req_type in {"DELETE_MATERIAL_REQUEST"}:
         ok_course, course_id = db.get_material_course_id(int(req.get("material_id", -1)))
         if not ok_course:
-            return False, err(course_id)
-        return (True, None) if db.can_user_access_course(user_id, role, school_id, course_id) and role in {"TEACHER", "ADMIN"} else deny()
+            return False, err(course_id), auth_context
+        return (True, None, auth_context) if db.can_user_access_course(user_id, role, school_id, course_id) and role in {"TEACHER", "ADMIN"} else deny()
 
     if req_type in {"DELETE_MESSAGE_REQUEST"}:
         ok_course, course_id = db.get_message_course_id(int(req.get("message_id", -1)))
         if not ok_course:
-            return False, err(course_id)
-        return (True, None) if db.can_user_access_course(user_id, role, school_id, course_id) and role in {"TEACHER", "ADMIN"} else deny()
+            return False, err(course_id), auth_context
+        return (True, None, auth_context) if db.can_user_access_course(user_id, role, school_id, course_id) and role in {"TEACHER", "ADMIN"} else deny()
 
     if req_type == "DOWNLOAD_FILE_REQUEST":
         resolved = resolve_storage_path(req.get("file_path", ""))
         if resolved is None:
-            return False, err("INVALID_FILE_PATH")
+            return False, err("INVALID_FILE_PATH"), auth_context
         allowed = db.can_user_access_file(user_id, role, school_id, str(resolved))
-        return (True, None) if allowed else deny()
+        return (True, None, auth_context) if allowed else deny()
 
-    return True, None
+    return True, None, auth_context
 
 
 # -----------------------------
@@ -400,7 +456,8 @@ def handle_login(req: dict) -> dict:
     ok_db, role, user_id, uname, school_id, school_name, school_address, school_contact_email = db.login_user(req["email"], req["password"])
     if ok_db:
         return ok(role=role, user_id=user_id, name=uname, school_id=school_id, school_name=school_name,
-                  school_address=school_address, school_contact_email=school_contact_email)
+                  school_address=school_address, school_contact_email=school_contact_email,
+                  auth_token=create_auth_token(user_id))
     return err(role)
 
 
@@ -964,7 +1021,7 @@ def handle_mark_grade_read(req: dict) -> dict:
 # Admin request handlers
 # -----------------------------
 def _admin_only(req: dict) -> bool:
-    # Real authorization is enforced in authorize_request using the session role.
+    # Real authorization is enforced in authorize_request using the authenticated user role.
     return True
 
 
@@ -1106,10 +1163,10 @@ ROUTES = {
 }
 
 
-def handle_request(req: dict, client_ip="UNKNOWN", session: dict | None = None) -> dict:
+def handle_request(req: dict, client_ip="UNKNOWN") -> dict:
     req_type = req.get("type")
-    user_id = req.get("user_id") or req.get("sender_id") or req.get("updated_by") or (session or {}).get("user_id")
-    user_name = req.get("name") or (session or {}).get("name")
+    user_id = req.get("user_id") or req.get("sender_id") or req.get("updated_by")
+    user_name = req.get("name")
 
     if not req_type:
         resp = err("MISSING_TYPE")
@@ -1122,7 +1179,9 @@ def handle_request(req: dict, client_ip="UNKNOWN", session: dict | None = None) 
         log_action(req_type, req, resp, client_ip, user_id, user_name)
         return resp
 
-    auth_ok, auth_resp = authorize_request(req, session or {})
+    auth_ok, auth_resp, auth_context = authorize_request(req)
+    user_id = auth_context.get("user_id") or user_id
+    user_name = auth_context.get("name") or user_name
     if not auth_ok:
         log_action(req_type, req, auth_resp, client_ip, user_id, user_name)
         return auth_resp
@@ -1137,14 +1196,14 @@ def handle_request(req: dict, client_ip="UNKNOWN", session: dict | None = None) 
 
     return resp
 # -----------------------------
-# Client session: DH + AES + one request
+# Client connection: DH + AES + request loop
 # -----------------------------
 def handle_client(client_sock, addr):
     print(f"[+] Connected: {addr}")
-    session = {}
     try:
-        client_sock.settimeout(SOCKET_TIMEOUT_SECONDS)
+        client_sock.settimeout(HANDSHAKE_TIMEOUT_SECONDS)
         aes_key = DH_server(client_sock)
+        client_sock.settimeout(None)
 
         while True:
             encrypted_req = recv_by_size(client_sock)
@@ -1158,9 +1217,7 @@ def handle_client(client_sock, addr):
             except json.JSONDecodeError:
                 resp = err("BAD_JSON")
             else:
-                resp = handle_request(req, addr[0], session)
-                if req.get("type") == "LOGIN_REQUEST" and resp.get("status") == "OK":
-                    session = build_session_from_login_response(resp)
+                resp = handle_request(req, addr[0])
 
             plain_resp = json.dumps(resp).encode("utf-8")
             encrypted_resp = encrypt_message(aes_key, plain_resp)

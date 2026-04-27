@@ -121,6 +121,22 @@ Item {
         return "" + value
     }
 
+    function hasHebrewText(value) {
+        return /[\u0590-\u05FF]/.test(value ? value.toString() : "")
+    }
+
+    function rtlWrappedText(value) {
+        var text = value ? value.toString() : ""
+        if (!hasHebrewText(text))
+            return text
+        var lines = text.split("\n")
+        for (var i = 0; i < lines.length; i++) {
+            if (lines[i].trim().length > 0)
+                lines[i] = "\u202B" + lines[i] + "\u202C"
+        }
+        return lines.join("\n")
+    }
+
     function backendPayloadToText(payload) {
         if (payload === undefined)
             return ""
@@ -1019,6 +1035,8 @@ Item {
 
     function logout() {
         backendStub("logout", { userId: userId, userName: userName, role: role })
+        if (typeof auth !== "undefined" && auth)
+            auth.logout()
         if (nav)
             nav.pop()
     }
@@ -1679,6 +1697,7 @@ Item {
         id: fileDialog
         title: "Select file"
         fileMode: FileDialog.OpenFile
+        nameFilters: ["All files (*)", "Archives (*.zip *.tar *.tgz *.rar *.7z)", "Code files (*.py *.cs *.java *.js *.ts *.cpp *.c *.h)"]
         onAccepted: {
             var path = selectedFile.toString()
             var cleanName = root.fileNameFromPath(path)
@@ -3057,7 +3076,7 @@ Item {
 
                         AreaField { label: "Instructions"; placeholder: "Write the instructions for the class"; text: root.createAssignmentDescription; onTextChanged: root.createAssignmentDescription = text; implicitHeight: 140 }
 
-                        Text { text: "File limit: up to 25MB - For multiple files, zip them"; color: muted; font.pixelSize: 11 }
+                        Text { text: "File limit: up to 25MB - For multiple files, upload one ZIP"; color: muted; font.pixelSize: 11 }
 
                         Rectangle {
                             Layout.fillWidth: true
@@ -3489,7 +3508,7 @@ Item {
                         InputField { label: "Title"; placeholder: "Example: Lesson summary"; text: root.materialTitle; onTextChanged: root.materialTitle = text }
                         AreaField { label: "Description"; placeholder: "Describe the material for the class"; text: root.materialDescription; onTextChanged: root.materialDescription = text; implicitHeight: 140 }
 
-                        Text { text: "File limit: up to 25MB - For multiple files, zip them"; color: muted; font.pixelSize: 11 }
+                        Text { text: "File limit: up to 25MB - For multiple files, upload one ZIP"; color: muted; font.pixelSize: 11 }
 
                         Rectangle {
                             Layout.fillWidth: true
@@ -3786,6 +3805,7 @@ Item {
                             }
 
                             Rectangle {
+                                id: aiFeedbackPanel
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 Layout.preferredHeight: 180
@@ -3793,14 +3813,25 @@ Item {
                                 color: "#F8FAFC"
                                 border.width: 1
                                 border.color: line
+                                readonly property var selectedSubmission: root.submissionById(root.selectedSubmissionId)
+                                readonly property string feedbackText: aiFeedbackPanel.selectedSubmission ? (aiFeedbackPanel.selectedSubmission.aiText || "No AI feedback yet") : "Select a submission to view AI feedback."
+                                readonly property bool feedbackIsRtl: root.hasHebrewText(aiFeedbackPanel.feedbackText)
 
                                 ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: 12
                                     spacing: 6
-                                    Text { text: "AI feedback"; color: ink; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "AI feedback"
+                                        color: ink
+                                        font.pixelSize: 12
+                                        font.weight: Font.DemiBold
+                                        horizontalAlignment: aiFeedbackPanel.feedbackIsRtl ? Text.AlignRight : Text.AlignLeft
+                                    }
                                     ScrollView {
-                                        LayoutMirroring.enabled: false
+                                        LayoutMirroring.enabled: aiFeedbackPanel.feedbackIsRtl
+                                        LayoutMirroring.childrenInherit: true
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         clip: true
@@ -3808,10 +3839,12 @@ Item {
                                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                                         Text {
                                             width: Math.max(0, (parent.availableWidth > 0 ? parent.availableWidth : parent.width) - 2)
-                                            text: submissionById(root.selectedSubmissionId) ? (submissionById(root.selectedSubmissionId).aiText || "No AI feedback yet") : "Select a submission to view AI feedback."
+                                            text: root.rtlWrappedText(aiFeedbackPanel.feedbackText)
                                             color: muted
                                             font.pixelSize: 11
+                                            textFormat: Text.PlainText
                                             wrapMode: Text.WrapAnywhere
+                                            horizontalAlignment: aiFeedbackPanel.feedbackIsRtl ? Text.AlignRight : Text.AlignLeft
                                         }
                                     }
                                 }

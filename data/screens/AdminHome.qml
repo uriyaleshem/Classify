@@ -341,6 +341,8 @@ Item {
     }
 
     function logout() {
+        if (typeof auth !== "undefined" && auth)
+            auth.logout()
         if (nav)
             nav.pop()
     }
@@ -705,6 +707,7 @@ Item {
         id: fileDialog
         title: "Select file"
         fileMode: FileDialog.OpenFile
+        nameFilters: ["All files (*)", "Archives (*.zip *.tar *.tgz *.rar *.7z)", "Code files (*.py *.cs *.java *.js *.ts *.cpp *.c *.h)"]
         onAccepted: {
             var path = selectedFile.toString()
             if (root.fileDialogTarget === "assignment_rubric") {
@@ -1607,6 +1610,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: 3
                         Text { text: "Rubric attachment"; color: faint; font.pixelSize: 10; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Text { text: "Up to 25MB - for multiple files, upload one ZIP"; color: faint; font.pixelSize: 10; Layout.fillWidth: true; elide: Text.ElideRight }
                         Text { text: safe(editRow.attachment_name || fileNameFromPath(editRow.attachment_path)); color: ink; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
                     }
                     Rectangle {

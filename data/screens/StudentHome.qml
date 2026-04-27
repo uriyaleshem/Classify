@@ -77,7 +77,7 @@ Item {
     FileDialog {
         id: uploadDialog
         title: "Choose submission file"
-        nameFilters: ["Allowed files (*.pdf *.doc *.docx *.txt *.py)", "All files (*)"]
+        nameFilters: ["All files (*)", "Archives (*.zip *.tar *.tgz *.rar *.7z)", "Code files (*.py *.cs *.java *.js *.ts *.cpp *.c *.h)"]
         onAccepted: {
             pendingSubmissionFilePath = selectedFile.toString()
             pendingSubmissionFileName = fileNameFromPath(pendingSubmissionFilePath)
@@ -477,12 +477,6 @@ Item {
     }
 
     function validateSubmissionFile() {
-        if (!pendingSubmissionFileName || pendingSubmissionFileName.length === 0)
-            return ""
-        var lower = pendingSubmissionFileName.toLowerCase()
-        var allowed = lower.endsWith(".pdf") || lower.endsWith(".doc") || lower.endsWith(".docx") || lower.endsWith(".txt") || lower.endsWith(".py")
-        if (!allowed)
-            return "Only PDF, DOC, DOCX, TXT or PY files are allowed"
         return ""
     }
 
@@ -575,6 +569,8 @@ Item {
 
     function logout() {
         backendStub("logout", { userId: userId, userName: userName, role: role })
+        if (typeof auth !== "undefined" && auth)
+            auth.logout()
         if (nav)
             nav.pop()
     }
@@ -1827,7 +1823,7 @@ Item {
                                 color: cardSoft
                                 border.width: 1
                                 border.color: line
-                                implicitHeight: 378
+                                implicitHeight: 398
 
                                 ColumnLayout {
                                     anchors.fill: parent
@@ -1835,6 +1831,7 @@ Item {
                                     spacing: 10
                                     Text { text: "Submit this assignment"; color: ink; font.pixelSize: 15; font.weight: Font.DemiBold }
                                     Text { text: "You can submit text, attach a file, or both. At least one of them is required."; color: muted; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+                                    Text { text: "File limit: up to 25MB - For multiple files, upload one ZIP"; color: muted2; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                                     Rectangle {
                                         Layout.fillWidth: true
                                         implicitHeight: 132
@@ -2633,13 +2630,14 @@ Item {
                     color: "#F8FBFF"
                     border.width: 1
                     border.color: "#D9E7FF"
-                    implicitHeight: 404
+                    implicitHeight: 424
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 16
                         spacing: 10
                         Text { text: "Submit this assignment"; color: ink; font.pixelSize: 16; font.weight: Font.DemiBold }
                         Text { text: "You can submit text, attach a file, or both. At least one of them is required."; color: muted; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+                        Text { text: "File limit: up to 25MB - For multiple files, upload one ZIP"; color: muted2; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 132

@@ -165,7 +165,7 @@ Item {
     // 2) טיימר גיבוי: אם אין תשובה מהשרת, לא להיתקע על loading
     Timer {
         id: netTimeout
-        interval: 8000
+        interval: 35000
         repeat: false
         onTriggered: {
             login.loading = false

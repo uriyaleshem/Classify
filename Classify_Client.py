@@ -74,8 +74,8 @@ def prettify_message(message: str) -> str:
         'NO_PENDING_SUBMISSIONS': 'There are no pending submissions right now.',
         'CLAIM_CONFLICT': 'This submission is already being processed. Please try again in a moment.',
         'NO_PERMISSION': 'You do not have permission to perform this action.',
-        'NOT_AUTHENTICATED': 'Your session has expired. Please sign in again.',
-        'AUTH_REQUIRED': 'Your session has expired. Please sign in again.',
+        'NOT_AUTHENTICATED': 'Please sign in before continuing.',
+        'AUTH_REQUIRED': 'Please sign in before continuing.',
         'FORBIDDEN': 'You do not have permission to perform this action.',
         'UNKNOWN_REQUEST': 'The app sent an unsupported request to the server.',
         'FILE_NOT_FOUND': 'The selected file could not be found.',
@@ -121,6 +121,7 @@ class AuthClient:
 
         self.sock = None
         self.aes_key = None
+        self.current_user = {}
         self._lock = threading.Lock()
 
     def connect(self):
@@ -128,9 +129,16 @@ class AuthClient:
             return
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout_seconds)
-        sock.connect((self.host, self.port))
-        aes_key = DH_client(sock)
+        try:
+            sock.settimeout(self.timeout_seconds)
+            sock.connect((self.host, self.port))
+            aes_key = DH_client(sock)
+        except Exception:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            raise
 
         self.sock = sock
         self.aes_key = aes_key
@@ -149,7 +157,12 @@ class AuthClient:
             if self.sock is None or self.aes_key is None:
                 self.connect()
 
-            plain = json.dumps(req).encode("utf-8")
+            outgoing = dict(req)
+            if self.current_user and outgoing.get("type") not in {"LOGIN_REQUEST", "SIGNUP_REQUEST"}:
+                outgoing["_auth_user_id"] = int(self.current_user.get("user_id", -1))
+                outgoing["_auth_token"] = str(self.current_user.get("auth_token", ""))
+
+            plain = json.dumps(outgoing).encode("utf-8")
             encrypted = encrypt_message(self.aes_key, plain)
             send_with_size(self.sock, encrypted)
 
@@ -168,6 +181,10 @@ class AuthClient:
             self.connect()
             return self._send_request_once(req)
 
+    def clear_user(self):
+        with self._lock:
+            self.current_user = {}
+
     def _load_file_payload(self, local_path: str):
         path = (local_path or "").replace("file:///", "")
         path = os.path.normpath(path)
@@ -180,7 +197,17 @@ class AuthClient:
         email = email.strip().lower()
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
         req = {"type": "LOGIN_REQUEST", "email": email, "password": password_hash}
-        return self.send_request(req)
+        resp = self.send_request(req)
+        if resp.get("status") == "OK":
+            self.current_user = {
+                "user_id": int(resp.get("user_id", -1)),
+                "role": str(resp.get("role", "")).upper(),
+                "school_id": int(resp.get("school_id", -1)),
+                "auth_token": str(resp.get("auth_token", "")),
+            }
+        else:
+            self.current_user = {}
+        return resp
 
     def signup(self, name, email: str, password: str, role: str, school_id) -> dict:
         email = email.strip().lower()
@@ -428,6 +455,10 @@ class Auth(QObject):
             self._client.connect()
         except Exception as e:
             print(" Initial connect failed:", e)
+
+    @Slot()
+    def logout(self):
+        self._client.clear_user()
 
     @Slot(int, str, str, str, str)
     def updateSchool(self, school_id, name, address, contact_name, contact_email):
