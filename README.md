@@ -143,24 +143,4 @@ Supported readable inputs include common text/code files, PDF, DOCX, PPTX, XLSX,
 - Passwords are hashed on the client before being sent to the server.
 - Server logs redact sensitive fields such as passwords, tokens, and uploaded file contents.
 
-This is still a local educational project, not a production deployment. For production use, add TLS, persistent server-side token secrets, stronger password storage, formal migrations, and deployment hardening.
-
-## Development Checks
-
-Useful checks before committing:
-
-```powershell
-python -m py_compile AI_Grader.py Classify_Server.py Classify_Client.py db.py DH.py AES_e.py tcp_by_size.py
-git diff --check
-pyside6-qmllint data/screens/Login.qml data/screens/AdminHome.qml data/screens/TeacherHome.qml data/screens/StudentHome.qml main.qml
-```
-
-`pyside6-qmllint` may report warnings from the current QML style. Treat errors as blockers.
-
-## Git Hygiene
-
-Recommended to commit source changes separately from runtime data:
-
-- Usually commit: `.py`, `.qml`, image assets, docs, and intentional seed data.
-- Usually do not commit: generated logs, local database changes, temporary extraction folders, and real student submissions unless they are intentional test fixtures.
 
