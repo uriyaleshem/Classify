@@ -142,5 +142,3 @@ Supported readable inputs include common text/code files, PDF, DOCX, PPTX, XLSX,
 - Authenticated requests include a signed auth token issued at login.
 - Passwords are hashed on the client before being sent to the server.
 - Server logs redact sensitive fields such as passwords, tokens, and uploaded file contents.
-
-
