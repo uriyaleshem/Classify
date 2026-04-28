@@ -3,6 +3,26 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Classify runtime data
+server_data/
+server_storage/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+*.log
+
+# Local app configuration and secrets
+.env
+.env.*
+!.env.example
+client_config.local.json
+
+# IDE/editor project files
+.idea/
+.vscode/
+
 # C extensions
 *.so
 
@@ -128,7 +148,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/

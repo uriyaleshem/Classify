@@ -1,5 +1,0 @@
-Lesson Summary
-
-Course: Physics Lab
-Created for demo UI data.
-Short summary for this week lessons.
