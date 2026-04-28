@@ -17,14 +17,25 @@ from AES_e import encrypt_message, decrypt_message
 import resources_rc
 
 
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 DEFAULT_CLASSIFY_HOST = "127.0.0.1"
 DEFAULT_CLASSIFY_PORT = 5555
 DEFAULT_DISCOVERY_TIMEOUT_SECONDS = 3
 
 
 def client_config_path() -> Path:
-    return Path(os.getenv("CLASSIFY_CLIENT_CONFIG", str(APP_DIR / "client_config.json")))
+    override_path = os.getenv("CLASSIFY_CLIENT_CONFIG", "").strip()
+    if override_path:
+        return Path(override_path)
+
+    candidates = [
+        APP_DIR / "client_config.json",
+        APP_DIR / "_internal" / "client_config.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return candidates[0]
 
 
 def load_client_config() -> dict:
