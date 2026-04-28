@@ -6,8 +6,12 @@ import re
 import base64
 import hashlib
 import hmac
+import shlex
 import shutil
 import secrets
+import subprocess
+import tempfile
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -23,9 +27,20 @@ PORT = 5555
 STORAGE_ROOT = Path(__file__).resolve().parent / "server_storage"
 MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
 LOG_FILE = Path(__file__).resolve().parent / "server_data/server_log.txt"
+UPLOAD_SCAN_TMP_DIR = Path(__file__).resolve().parent / "server_data" / "upload_scan_tmp"
 
 PUBLIC_PATH_PREFIX = "storage://"
 HANDSHAKE_TIMEOUT_SECONDS = 30
+
+MAX_FAILED_LOGIN_ATTEMPTS = int(os.getenv("CLASSIFY_MAX_FAILED_LOGIN_ATTEMPTS", "20"))
+FAILED_LOGIN_WINDOW_SECONDS = int(os.getenv("CLASSIFY_FAILED_LOGIN_WINDOW_SECONDS", "900"))
+LOGIN_BLOCK_SECONDS = int(os.getenv("CLASSIFY_LOGIN_BLOCK_SECONDS", "1800"))
+
+ANTIVIRUS_SCAN_ENABLED = os.getenv("CLASSIFY_AV_SCAN_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+ANTIVIRUS_FAIL_OPEN = os.getenv("CLASSIFY_AV_FAIL_OPEN", "0").strip().lower() in {"1", "true", "yes", "on"}
+ANTIVIRUS_SCAN_TIMEOUT_SECONDS = int(os.getenv("CLASSIFY_AV_SCAN_TIMEOUT_SECONDS", "60"))
+ANTIVIRUS_SCAN_COMMAND = os.getenv("CLASSIFY_AV_SCAN_COMMAND", "").strip()
+EICAR_TEST_SIGNATURE = b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE"
 
 LOG_REDACTED_VALUE = "<redacted>"
 LOG_BINARY_VALUE = "<binary content omitted>"
@@ -41,6 +56,8 @@ LOG_SENSITIVE_KEYS = {
 }
 
 AUTH_TOKEN_SECRET = secrets.token_bytes(32)
+FAILED_LOGIN_LOCK = threading.Lock()
+FAILED_LOGINS_BY_SOURCE = {}
 
 
 def auth_token_signature(payload: str) -> str:
@@ -187,6 +204,60 @@ def require_fields(req: dict, fields: list[str]):
     return True, None
 
 
+def normalize_login_source(client_ip: str) -> str:
+    source = str(client_ip or "").strip()
+    return source or "UNKNOWN"
+
+
+def get_login_block_status(client_ip: str):
+    source = normalize_login_source(client_ip)
+    now = time.monotonic()
+    with FAILED_LOGIN_LOCK:
+        state = FAILED_LOGINS_BY_SOURCE.get(source)
+        if not state:
+            return False, 0
+
+        blocked_until = float(state.get("blocked_until", 0))
+        if blocked_until > now:
+            return True, max(1, int(blocked_until - now + 0.999))
+
+        first_failed_at = float(state.get("first_failed_at", now))
+        if now - first_failed_at > max(1, FAILED_LOGIN_WINDOW_SECONDS):
+            FAILED_LOGINS_BY_SOURCE.pop(source, None)
+            return False, 0
+
+        if blocked_until:
+            state["blocked_until"] = 0
+        return False, 0
+
+
+def record_failed_login(client_ip: str):
+    source = normalize_login_source(client_ip)
+    now = time.monotonic()
+    window_seconds = max(1, FAILED_LOGIN_WINDOW_SECONDS)
+    max_attempts = max(1, MAX_FAILED_LOGIN_ATTEMPTS)
+    block_seconds = max(1, LOGIN_BLOCK_SECONDS)
+
+    with FAILED_LOGIN_LOCK:
+        state = FAILED_LOGINS_BY_SOURCE.get(source)
+        if not state or now - float(state.get("first_failed_at", now)) > window_seconds:
+            state = {"count": 0, "first_failed_at": now, "blocked_until": 0}
+            FAILED_LOGINS_BY_SOURCE[source] = state
+
+        state["count"] = int(state.get("count", 0)) + 1
+        if state["count"] >= max_attempts:
+            state["blocked_until"] = now + block_seconds
+            return True, block_seconds
+
+        return False, max_attempts - state["count"]
+
+
+def reset_failed_login_source(client_ip: str):
+    source = normalize_login_source(client_ip)
+    with FAILED_LOGIN_LOCK:
+        FAILED_LOGINS_BY_SOURCE.pop(source, None)
+
+
 def sanitize_filename(filename: str) -> str:
     if not filename:
         return "file.bin"
@@ -203,6 +274,145 @@ def decode_file_content(file_content_b64: str):
         return False, b""
 
 
+def find_windows_defender_scanner():
+    candidates = []
+
+    program_files = os.environ.get("ProgramFiles")
+    if program_files:
+        candidates.append(Path(program_files) / "Windows Defender" / "MpCmdRun.exe")
+
+    program_data = os.environ.get("ProgramData")
+    if program_data:
+        platform_root = Path(program_data) / "Microsoft" / "Windows Defender" / "Platform"
+        try:
+            platform_candidates = [p for p in platform_root.glob("*/MpCmdRun.exe") if p.is_file()]
+            platform_candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            candidates.extend(platform_candidates)
+        except Exception:
+            pass
+
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except Exception:
+            continue
+
+    return shutil.which("MpCmdRun.exe")
+
+
+def build_antivirus_command(scan_path: Path):
+    if ANTIVIRUS_SCAN_COMMAND:
+        try:
+            command_parts = shlex.split(ANTIVIRUS_SCAN_COMMAND, posix=(os.name != "nt"))
+        except ValueError:
+            return "", []
+        if not command_parts:
+            return "", []
+        scan_path_text = str(scan_path)
+        if any("{path}" in part for part in command_parts):
+            command_parts = [part.replace("{path}", scan_path_text) for part in command_parts]
+        else:
+            command_parts.append(scan_path_text)
+        return "custom", command_parts
+
+    clamdscan = shutil.which("clamdscan")
+    if clamdscan:
+        return "clamav", [clamdscan, "--no-summary", str(scan_path)]
+
+    clamscan = shutil.which("clamscan")
+    if clamscan:
+        return "clamav", [clamscan, "--no-summary", str(scan_path)]
+
+    defender = find_windows_defender_scanner()
+    if defender:
+        return "defender", [defender, "-Scan", "-ScanType", "3", "-File", str(scan_path), "-DisableRemediation"]
+
+    return "", []
+
+
+def antivirus_output_indicates_malware(scanner_name: str, return_code: int, output_text: str) -> bool:
+    text = (output_text or "").lower()
+    if scanner_name == "clamav":
+        return return_code == 1 or " found" in text or "infected files: 1" in text
+    if scanner_name == "defender":
+        threat_markers = (
+            "threat",
+            "found",
+            "malware",
+            "virus",
+            "infected",
+            "detected",
+            "eicar",
+        )
+        clean_markers = (
+            "no threats",
+            "no threat",
+            "found no threats",
+            "threats found: 0",
+            "found 0 threats",
+            "scan completed successfully",
+        )
+        return any(marker in text for marker in threat_markers) and not any(marker in text for marker in clean_markers)
+    return return_code == 1 or "malware" in text or "virus" in text or "infected" in text
+
+
+def scan_file_bytes_for_malware(file_bytes: bytes, original_name: str):
+    if not ANTIVIRUS_SCAN_ENABLED:
+        return True, "SCAN_DISABLED"
+
+    if EICAR_TEST_SIGNATURE in file_bytes:
+        return False, "FILE_REJECTED_MALWARE"
+
+    UPLOAD_SCAN_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(sanitize_filename(original_name)).suffix[:24] or ".upload"
+    fd, temp_path_text = tempfile.mkstemp(prefix="classify_scan_", suffix=suffix, dir=str(UPLOAD_SCAN_TMP_DIR))
+    temp_path = Path(temp_path_text)
+
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(file_bytes)
+
+        scanner_name, command = build_antivirus_command(temp_path)
+        if not command:
+            if ANTIVIRUS_FAIL_OPEN:
+                print("[AV] No antivirus scanner found; upload allowed because CLASSIFY_AV_FAIL_OPEN is enabled.")
+                return True, "SCAN_UNAVAILABLE"
+            return False, "FILE_SCAN_UNAVAILABLE"
+
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=max(1, ANTIVIRUS_SCAN_TIMEOUT_SECONDS),
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.TimeoutExpired:
+            return False, "FILE_SCAN_FAILED"
+        except Exception as exc:
+            print(f"[AV] Scanner could not run: {exc}")
+            return False, "FILE_SCAN_FAILED"
+
+        output_text = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+        if antivirus_output_indicates_malware(scanner_name, completed.returncode, output_text):
+            return False, "FILE_REJECTED_MALWARE"
+
+        if completed.returncode == 0:
+            return True, "SCAN_CLEAN"
+
+        print(f"[AV] Scanner failed with exit code {completed.returncode}: {output_text[:500]}")
+        return False, "FILE_SCAN_FAILED"
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def save_base64_file(file_content_b64: str, original_name: str, relative_dir: Path):
     ok_decode, file_bytes = decode_file_content(file_content_b64)
     if not ok_decode:
@@ -213,6 +423,10 @@ def save_base64_file(file_content_b64: str, original_name: str, relative_dir: Pa
 
     if len(file_bytes) > MAX_FILE_SIZE:
         return False, "FILE_TOO_LARGE"
+
+    ok_scan, scan_result = scan_file_bytes_for_malware(file_bytes, original_name)
+    if not ok_scan:
+        return False, scan_result
 
     safe_name = sanitize_filename(original_name)
     target_dir = STORAGE_ROOT / relative_dir
@@ -448,16 +662,29 @@ def handle_signup(req: dict) -> dict:
     return err(msg)
 
 
-def handle_login(req: dict) -> dict:
+def handle_login(req: dict, client_ip="UNKNOWN") -> dict:
+    blocked, retry_after_seconds = get_login_block_status(client_ip)
+    if blocked:
+        return err("LOGIN_RATE_LIMITED", retry_after_seconds=retry_after_seconds)
+
     valid, e = require_fields(req, ["email", "password"])
     if not valid:
         return e
 
     ok_db, role, user_id, uname, school_id, school_name, school_address, school_contact_email = db.login_user(req["email"], req["password"])
     if ok_db:
+        reset_failed_login_source(client_ip)
         return ok(role=role, user_id=user_id, name=uname, school_id=school_id, school_name=school_name,
                   school_address=school_address, school_contact_email=school_contact_email,
                   auth_token=create_auth_token(user_id))
+
+    if role == "INVALID_CREDENTIALS":
+        source_blocked, result = record_failed_login(client_ip)
+        if source_blocked:
+            return err("LOGIN_RATE_LIMITED", retry_after_seconds=result)
+        return err(role, remaining_attempts=result)
+
+    reset_failed_login_source(client_ip)
     return err(role)
 
 
@@ -1187,7 +1414,10 @@ def handle_request(req: dict, client_ip="UNKNOWN") -> dict:
         return auth_resp
 
     try:
-        resp = handler(req)
+        if req_type == "LOGIN_REQUEST":
+            resp = handler(req, client_ip)
+        else:
+            resp = handler(req)
     except Exception as e:
         print("[!] Handler exception:", e)
         resp = err("SERVER_ERROR")

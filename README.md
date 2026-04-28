@@ -142,3 +142,5 @@ Supported readable inputs include common text/code files, PDF, DOCX, PPTX, XLSX,
 - Authenticated requests include a signed auth token issued at login.
 - Passwords are hashed on the client before being sent to the server.
 - Server logs redact sensitive fields such as passwords, tokens, and uploaded file contents.
+- Failed login attempts are rate-limited per source IP. Defaults: 20 failed attempts within 15 minutes blocks that source for 30 minutes. Override with `CLASSIFY_MAX_FAILED_LOGIN_ATTEMPTS`, `CLASSIFY_FAILED_LOGIN_WINDOW_SECONDS`, and `CLASSIFY_LOGIN_BLOCK_SECONDS`.
+- Uploaded files are scanned on the server before they are saved to `server_storage/`. The server auto-detects ClamAV (`clamdscan`/`clamscan`) or Microsoft Defender on Windows. If no scanner is available, uploads fail closed with `FILE_SCAN_UNAVAILABLE`; set `CLASSIFY_AV_SCAN_COMMAND` for a custom scanner command using `{path}`, `CLASSIFY_AV_SCAN_ENABLED=0` for local-only development, or `CLASSIFY_AV_FAIL_OPEN=1` to allow uploads when scanning is unavailable.
