@@ -155,6 +155,43 @@ Item {
         return txt
     }
 
+    function formatMaterialDateTime(value) {
+        if (!value || ("" + value).trim().length === 0)
+            return ""
+        var txt = (("" + value).replace("T", " ")).trim()
+        var parts = txt.split(/\s+/)
+        var datePart = parts.length > 0 ? parts[0] : ""
+        var timePart = parts.length >= 2 ? parts[1] : ""
+        var dateText = datePart
+        var dateParts = datePart.split("-")
+        if (dateParts.length === 3) {
+            var day = dateParts[2]
+            var month = dateParts[1]
+            var year = dateParts[0]
+            if (year.length !== 4) {
+                day = dateParts[0]
+                year = dateParts[2]
+            }
+            var dayNum = parseInt(day, 10)
+            var monthNum = parseInt(month, 10)
+            if (!isNaN(dayNum))
+                day = dayNum.toString()
+            if (!isNaN(monthNum))
+                month = monthNum.toString()
+            if (year.length === 4)
+                year = year.slice(2)
+            dateText = day + "/" + month + "/" + year
+        } else {
+            dateText = datePart.split("-").join("/")
+        }
+        if (!timePart)
+            return dateText
+        var cleanTime = timePart.split(".")[0]
+        var timeParts = cleanTime.split(":")
+        var timeText = timeParts.length >= 2 ? timeParts[0] + ":" + timeParts[1] : cleanTime
+        return dateText + " " + timeText
+    }
+
     function isAssignmentOpen(dueTextValue) {
         if (!dueTextValue || dueTextValue.length === 0)
             return true
@@ -587,6 +624,17 @@ Item {
         return true
     }
 
+    function assignmentVisibleInAssignmentsPage(assignmentObj) {
+        if (!assignmentObj)
+            return false
+        var submitted = hasStudentSubmission(assignmentObj)
+        if (assignmentDisplayMode === "Submitted")
+            return submitted
+        if (assignmentDisplayMode === "Not submitted")
+            return !submitted && shouldShowAssignmentInMainList(assignmentObj)
+        return submitted || shouldShowAssignmentInMainList(assignmentObj)
+    }
+
     function classOpenAssignmentCount(classId) {
         var total = 0
         for (var i = 0; i < assignmentsModel.count; i++) {
@@ -648,7 +696,7 @@ Item {
         var total = 0
         for (var i = 0; i < assignmentsModel.count; i++) {
             var a = assignmentsModel.get(i)
-            if (shouldShowAssignmentInMainList(a) && filterAccepts(root.assignmentFilterClass, a.classId) && assignmentVisibleForMode(hasStudentSubmission(a)) && matchesSearch(a.title + " " + a.description + " " + classNameById(a.classId), root.assignmentSearchText))
+            if (assignmentVisibleInAssignmentsPage(a) && filterAccepts(root.assignmentFilterClass, a.classId) && matchesSearch(a.title + " " + a.description + " " + classNameById(a.classId), root.assignmentSearchText))
                 total += 1
         }
         return total
@@ -1734,7 +1782,7 @@ Item {
                                     visible: visibleAssignmentsCount() > 0
                                     ScrollIndicator.vertical: ScrollIndicator { }
                                     delegate: Item {
-                                        property bool shown: shouldShowAssignmentInMainList(model) && filterAccepts(root.assignmentFilterClass, classId) && assignmentVisibleForMode(hasStudentSubmission(model)) && matchesSearch(title + " " + description + " " + classNameById(classId), root.assignmentSearchText)
+                                        property bool shown: assignmentVisibleInAssignmentsPage(model) && filterAccepts(root.assignmentFilterClass, classId) && matchesSearch(title + " " + description + " " + classNameById(classId), root.assignmentSearchText)
                                         width: ListView.view.width
                                         height: shown ? 110 : 0
                                         visible: shown
@@ -1903,70 +1951,6 @@ Item {
                     }
                 }
 
-                SectionFrame {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 12
-                        Text { text: "All my submissions"; color: ink; font.pixelSize: 16; font.weight: Font.DemiBold }
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            radius: 18
-                            color: soft
-                            border.width: 1
-                            border.color: line
-                            ListView {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                clip: true
-                                spacing: 0
-                                model: assignmentsModel
-                                visible: visibleSubmittedAssignmentsCount() > 0
-                                ScrollIndicator.vertical: ScrollIndicator { }
-                                delegate: Item {
-                                    property bool shown: submitted && filterAccepts(root.assignmentFilterClass, classId)
-                                    width: ListView.view.width
-                                    height: shown ? 94 : 0
-                                    visible: shown
-
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        height: 84
-                                        radius: 16
-                                        color: "#FFFFFF"
-                                        border.width: 1
-                                        border.color: line
-                                        RowLayout {
-                                            anchors.fill: parent
-                                            anchors.margins: 12
-                                            spacing: 12
-                                            Badge { textValue: classNameById(classId); bgColor: classAccentSoftById(classId); fgColor: classAccentById(classId) }
-                                            ColumnLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 2
-                                                Text { text: title; color: ink; font.pixelSize: 13; font.weight: Font.DemiBold }
-                                                Text { text: submissionFileName + (submittedAt.length > 0 ? " · " + formatDateTimePretty(submittedAt) : ""); color: muted; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true }
-                                            }
-                                            ActionButton { text: "Open"; kind: "ghost"; onClicked: openSubmission(assignmentId) }
-                                        }
-                                    }
-                                }
-                            }
-
-                            EmptyState {
-                                anchors.centerIn: parent
-                                visible: visibleSubmittedAssignmentsCount() === 0
-                                title: "No submissions yet"
-                                subtitle: "Once you submit an assignment, it will appear here."
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -2051,7 +2035,7 @@ Item {
                                                     Layout.fillWidth: true
                                                     spacing: 3
                                                     Text { text: title; color: ink; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
-                                                    Text { text: classNameById(classId) + " · " + whenText; color: muted; font.pixelSize: 12 }
+                                                    Text { text: classNameById(classId) + " · " + formatMaterialDateTime(whenText); color: muted; font.pixelSize: 12 }
                                                     Text { text: description; color: muted2; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; Layout.fillWidth: true }
                                                 }
                                                 ActionButton { text: "Open"; kind: "ghost"; onClicked: openMaterial(materialId) }
@@ -2082,7 +2066,7 @@ Item {
                                 Layout.fillWidth: true
                                 Badge { visible: currentMaterialObject() !== null; textValue: currentMaterialObject() ? classNameById(currentMaterialObject().classId) : ""; bgColor: currentMaterialObject() ? classAccentSoftById(currentMaterialObject().classId) : indigoSoft; fgColor: currentMaterialObject() ? classAccentById(currentMaterialObject().classId) : indigo700 }
                                 Item { Layout.fillWidth: true }
-                                Text { text: currentMaterialObject() ? currentMaterialObject().byText + " · " + currentMaterialObject().whenText : ""; color: muted; font.pixelSize: 12 }
+                                Text { text: currentMaterialObject() ? currentMaterialObject().byText + " · " + formatMaterialDateTime(currentMaterialObject().whenText) : ""; color: muted; font.pixelSize: 12 }
                             }
                             Rectangle {
                                 Layout.fillWidth: true
@@ -2781,7 +2765,7 @@ Item {
                     Layout.fillWidth: true
                     Badge { visible: currentMaterialObject() !== null; textValue: currentMaterialObject() ? classNameById(currentMaterialObject().classId) : ""; bgColor: currentMaterialObject() ? classAccentSoftById(currentMaterialObject().classId) : indigoSoft; fgColor: currentMaterialObject() ? classAccentById(currentMaterialObject().classId) : indigo700 }
                     Item { Layout.fillWidth: true }
-                    Text { text: currentMaterialObject() ? currentMaterialObject().byText + " · " + currentMaterialObject().whenText : ""; color: muted; font.pixelSize: 12 }
+                    Text { text: currentMaterialObject() ? currentMaterialObject().byText + " · " + formatMaterialDateTime(currentMaterialObject().whenText) : ""; color: muted; font.pixelSize: 12 }
                 }
                 Rectangle {
                     Layout.fillWidth: true
