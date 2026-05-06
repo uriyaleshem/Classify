@@ -14,20 +14,38 @@ Classify is a desktop school management and assignment review system. It include
 - Hebrew-aware teacher feedback formatting, including right-to-left display when Hebrew content is detected.
 - Encrypted client-server traffic using Diffie-Hellman key exchange and AES-GCM.
 
+## Screenshots
+
+| Login | Signup |
+| --- | --- |
+| <img src="docs/screenshots/login.png" alt="Login screen" width="420"> | <img src="docs/screenshots/signup.JPG" alt="Signup screen" width="420"> |
+
+| Teacher Dashboard | Student Dashboard |
+| --- | --- |
+| <img src="docs/screenshots/teacher_dashboard.png" alt="Teacher dashboard" width="420"> | <img src="docs/screenshots/student_dashboard.png" alt="Student dashboard" width="420"> |
+
+| Assignment Review |
+| --- |
+| <img src="docs/screenshots/assingment_review.png" alt="Assignment review" width="420"> |
+
 ## Project Structure
 
 ```text
-Classify_Client.py      PySide6 desktop client and QML bridge
-Classify_Server.py      TCP server, request routing, auth, file storage, and AI worker startup
-AI_Grader.py            AI grading providers, archive/text extraction, result merging, feedback formatting
-db.py                   SQLite schema, migrations, and data access functions
-DH.py                   Diffie-Hellman handshake helpers
-AES_e.py                AES-GCM encryption helpers
-tcp_by_size.py          Length-prefixed TCP send/receive helpers
-main.qml                Main QML application window
-data/screens/           QML screens and UI assets
-server_data/            Runtime database and server logs
-server_storage/         Uploaded assignment files, materials, and submissions
+client/                 PySide6 desktop client, QML screens, UI assets, and client config
+server/                 TCP server, SQLite data layer, AI grader, and server helpers
+website/                Optional project website and documentation site
+docs/                   Project documents and screenshots
+
+client/Classify_Client.py
+client/main.qml
+client/data/screens/
+client/client_config.json
+
+server/Classify_Server.py
+server/db.py
+server/AI_Grader.py
+server/server_data/     Runtime database and server logs, ignored by Git
+server/server_storage/  Uploaded files and submissions, ignored by Git
 ```
 
 ## Requirements
@@ -92,6 +110,7 @@ By default, `AI_GRADING_PROVIDERS` is `openai`. If no provider is configured, th
 Start the server first:
 
 ```powershell
+cd server
 python Classify_Server.py
 ```
 
@@ -104,22 +123,25 @@ The server listens on:
 Then start the desktop client:
 
 ```powershell
+cd client
 python Classify_Client.py
 ```
 
-The client connects to:
+By default, the client discovers the server address from:
 
 ```text
-127.0.0.1:5555
+https://classifyapp.org/config.json
 ```
+
+For local network testing, create `client/IP.txt` and write the server address there. When this file exists, the client uses it before the online discovery config. Examples: `192.168.1.50` or `192.168.1.50:5555`.
 
 ## Data and Storage
 
 Runtime data is stored locally:
 
-- `server_data/classify.db` stores application data in SQLite.
-- `server_data/server_log.txt` stores request/response logs.
-- `server_storage/` stores uploaded rubrics, materials, submissions, and demo files.
+- `server/server_data/classify.db` stores application data in SQLite.
+- `server/server_data/server_log.txt` stores request/response logs.
+- `server/server_storage/` stores uploaded rubrics, materials, submissions, and demo files.
 
 These files can change during normal app usage. Be careful before committing database, log, or uploaded submission changes.
 
