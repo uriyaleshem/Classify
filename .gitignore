@@ -18,6 +18,7 @@ server_storage/
 .env.*
 !.env.example
 client_config.local.json
+IP.txt
 
 # IDE/editor project files
 .idea/
@@ -35,8 +36,8 @@ downloads/
 exe/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/

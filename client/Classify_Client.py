@@ -23,6 +23,17 @@ DEFAULT_CLASSIFY_PORT = 5555
 DEFAULT_DISCOVERY_TIMEOUT_SECONDS = 3
 
 
+def client_ip_override_path() -> Path:
+    candidates = [
+        APP_DIR / "IP.txt",
+        APP_DIR / "_internal" / "IP.txt",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
 def client_config_path() -> Path:
     override_path = os.getenv("CLASSIFY_CLIENT_CONFIG", "").strip()
     if override_path:
@@ -51,6 +62,30 @@ def load_client_config() -> dict:
         return {}
 
 
+def parse_server_address_text(value: str, default_port=DEFAULT_CLASSIFY_PORT):
+    text = str(value or "").strip()
+    if not text:
+        return DEFAULT_CLASSIFY_HOST, safe_port(default_port, DEFAULT_CLASSIFY_PORT)
+
+    if ":" in text and not text.startswith("["):
+        host, port_text = text.rsplit(":", 1)
+        return host.strip() or DEFAULT_CLASSIFY_HOST, safe_port(port_text, default_port)
+
+    return text, safe_port(default_port, DEFAULT_CLASSIFY_PORT)
+
+
+def load_ip_override(default_port=DEFAULT_CLASSIFY_PORT):
+    path = client_ip_override_path()
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            return parse_server_address_text(file.read(), default_port)
+    except Exception as exc:
+        print(f"[DISCOVERY] Could not read {path}: {exc}")
+        return None
+
+
 def safe_port(value, default_port=DEFAULT_CLASSIFY_PORT) -> int:
     try:
         port = int(value)
@@ -69,6 +104,11 @@ def server_address_from_payload(payload: dict, default_host: str, default_port: 
         if isinstance(nested, dict):
             source = nested
             break
+
+    if "server_domain" in source:
+        host = str(source.get("server_domain") or "").strip() or default_host
+        port = source.get("port", source.get("server_port", default_port))
+        return host, safe_port(port, default_port)
 
     host = (
         source.get("host")
@@ -90,6 +130,10 @@ def fetch_discovery_server_address(discovery_url: str, timeout_seconds: int, def
 
 
 def resolve_configured_server_address(default_host=DEFAULT_CLASSIFY_HOST, default_port=DEFAULT_CLASSIFY_PORT):
+    ip_override = load_ip_override(default_port)
+    if ip_override:
+        return ip_override
+
     config = load_client_config()
     fallback_host = str(config.get("fallback_host") or config.get("host") or default_host).strip() or default_host
     fallback_port = safe_port(config.get("fallback_port", config.get("port", default_port)), default_port)
